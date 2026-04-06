@@ -111,12 +111,16 @@ class DownloadService {
   }
 
   // Fetch video info as parsed JSON using --dump-json.
-  // Uses yt-dlp's default client selection (no override) so it can pick ios/tv_embedded
-  // which work on datacenter IPs without PO tokens and return full DASH format lists.
+  // Uses mweb,web to bypass bot detection (same as downloads).
+  // --no-check-formats skips the HTTP HEAD check yt-dlp does per-format which
+  // triggers "Requested format is not available" on datacenter IPs even when the
+  // format data itself is valid.
   async _getInfo(url) {
     const cookiesArgs = await this._cookiesArgs();
     const { stdout } = await this._runCmd('yt-dlp', [
       ...cookiesArgs,
+      ...this._ytDownloadArgs(),
+      '--no-check-formats',
       '--dump-json',
       '--no-playlist',
       '--no-warnings',
