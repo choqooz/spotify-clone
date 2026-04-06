@@ -208,14 +208,14 @@ export const getLyrics = asyncHandler(async (req, res) => {
 
   const basic = info.basic_info;
   const trackName = basic.title;
-  const artistName = basic.author;
+  const artistName = basic.author ?? basic.channel?.name ?? '';
   const duration = basic.duration ?? 0;
 
-  if (!trackName || !artistName) {
-    throw new ValidationError('Missing track or artist information');
+  if (!trackName) {
+    throw new ValidationError('Missing track information');
   }
 
-  const lrcQuery = { track_name: trackName, artist_name: artistName };
+  const lrcQuery = { track_name: trackName, ...(artistName && { artist_name: artistName }) };
   let lyricsData = null;
 
   try {
