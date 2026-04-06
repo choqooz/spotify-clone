@@ -96,10 +96,10 @@ class DownloadService {
     }
   }
 
-  // YouTube bot-check bypass for cloud/datacenter IPs.
-  // android/ios clients don't require PO tokens unlike the web client.
+  // mweb/web clients use browser cookies for auth (android/ios ignore them).
+  // Browser cookies from a logged-in YouTube session bypass the bot check.
   _ytBaseArgs() {
-    return ['--extractor-args', 'youtube:player_client=android,ios,tv_embedded'];
+    return ['--extractor-args', 'youtube:player_client=mweb,web'];
   }
 
   async _runYtDlp(args) {
