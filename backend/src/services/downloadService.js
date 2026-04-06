@@ -40,6 +40,15 @@ class DownloadService {
         }
       }
 
+      // Auto-update yt-dlp — YouTube changes bot detection frequently
+      // and the Docker-cached binary may be months old
+      try {
+        await this._runCmd('yt-dlp', ['-U']);
+        logger.info('yt-dlp updated to latest version');
+      } catch (err) {
+        logger.warn({ err: err.message }, 'yt-dlp self-update failed, continuing with installed version');
+      }
+
       await this._runYtDlp(['--version']);
       logger.info('yt-dlp is ready');
 
@@ -87,10 +96,10 @@ class DownloadService {
     }
   }
 
-  // YouTube bot-check bypass: use TV embedded + web player clients.
-  // These don't require authentication and work on cloud IPs.
+  // YouTube bot-check bypass: android/ios clients bypass datacenter IP restrictions
+  // without requiring auth cookies. tv_embedded as last fallback.
   _ytBaseArgs() {
-    return ['--extractor-args', 'youtube:player_client=tv_embedded,web'];
+    return ['--extractor-args', 'youtube:player_client=android,ios,tv_embedded'];
   }
 
   async _runYtDlp(args) {
