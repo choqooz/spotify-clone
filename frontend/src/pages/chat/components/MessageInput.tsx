@@ -5,14 +5,14 @@ import { useUser } from "@clerk/clerk-react";
 import { Send } from "lucide-react";
 import { useState } from "react";
 
-const MessageInput = () => {
+export const MessageInput = () => {
 	const [newMessage, setNewMessage] = useState("");
 	const { user } = useUser();
 	const { selectedUser, sendMessage } = useChatStore();
 
 	const handleSend = () => {
 		if (!selectedUser || !user || !newMessage) return;
-		sendMessage(selectedUser.clerkId, user.id, newMessage.trim());
+		sendMessage(selectedUser.clerkId, newMessage.trim());
 		setNewMessage("");
 	};
 
@@ -34,4 +34,4 @@ const MessageInput = () => {
 		</div>
 	);
 };
-export default MessageInput;
+

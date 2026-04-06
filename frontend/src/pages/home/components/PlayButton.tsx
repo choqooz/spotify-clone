@@ -3,7 +3,7 @@ import { usePlayerStore } from "@/stores/usePlayerStore";
 import { Song } from "@/types";
 import { Pause, Play } from "lucide-react";
 
-const PlayButton = ({ song }: { song: Song }) => {
+export const PlayButton = ({ song }: { song: Song }) => {
 	const { currentSong, isPlaying, setCurrentSong, togglePlay } = usePlayerStore();
 	const isCurrentSong = currentSong?._id === song._id;
 
@@ -29,4 +29,4 @@ const PlayButton = ({ song }: { song: Song }) => {
 		</Button>
 	);
 };
-export default PlayButton;
+

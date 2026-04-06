@@ -23,7 +23,7 @@ interface NewSong {
 	duration: string;
 }
 
-const AddSongDialog = () => {
+export const AddSongDialog = () => {
 	const { albums } = useMusicStore();
 	const [songDialogOpen, setSongDialogOpen] = useState(false);
 	const [isLoading, setIsLoading] = useState(false);
@@ -218,4 +218,4 @@ const AddSongDialog = () => {
 		</Dialog>
 	);
 };
-export default AddSongDialog;
+

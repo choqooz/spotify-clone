@@ -1,14 +1,14 @@
 import { Song } from "@/types";
-import SectionGridSkeleton from "./SectionGridSkeleton";
+import { SectionGridSkeleton } from "./SectionGridSkeleton";
 import { Button } from "@/components/ui/button";
-import PlayButton from "./PlayButton";
+import { PlayButton } from "./PlayButton";
 
 type SectionGridProps = {
 	title: string;
 	songs: Song[];
 	isLoading: boolean;
 };
-const SectionGrid = ({ songs, title, isLoading }: SectionGridProps) => {
+export const SectionGrid = ({ songs, title, isLoading }: SectionGridProps) => {
 	if (isLoading) return <SectionGridSkeleton />;
 
 	return (
@@ -45,4 +45,4 @@ const SectionGrid = ({ songs, title, isLoading }: SectionGridProps) => {
 		</div>
 	);
 };
-export default SectionGrid;
+

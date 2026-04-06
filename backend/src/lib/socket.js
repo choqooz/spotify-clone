@@ -1,73 +1,79 @@
-import { Server } from "socket.io";
-import { Message } from "../models/message.model.js";
+import { Server } from 'socket.io';
+import { createClerkClient } from '@clerk/express';
+import { Message } from '../models/message.model.js';
+import { logger } from './logger.js';
+
+const IDLE_ACTIVITY = 'Idle';
 
 export const initializeSocket = (server) => {
-	const io = new Server(server, {
-		cors: {
-			origin: "http://localhost:3000",
-			credentials: true,
-		},
-	});
+  const allowedOrigins = process.env.ALLOWED_ORIGINS
+    ? process.env.ALLOWED_ORIGINS.split(',').map((o) => o.trim())
+    : ['http://localhost:3000'];
 
-	const userSockets = new Map(); // { userId: socketId}
-	const userActivities = new Map(); // {userId: activity}
+  const io = new Server(server, {
+    cors: { origin: allowedOrigins, credentials: true },
+  });
 
-	io.on("connection", (socket) => {
-		socket.on("user_connected", (userId) => {
-			userSockets.set(userId, socket.id);
-			userActivities.set(userId, "Idle");
+  const clerkClient = createClerkClient({ secretKey: process.env.CLERK_SECRET_KEY });
 
-			// broadcast to all connected sockets that this user just logged in
-			io.emit("user_connected", userId);
+  const userSockets = new Map(); // { userId: socketId }
+  const userActivities = new Map(); // { userId: activity }
 
-			socket.emit("users_online", Array.from(userSockets.keys()));
+  // ── Auth middleware: verify Clerk token before accepting any connection ──
+  io.use(async (socket, next) => {
+    try {
+      const token = socket.handshake.auth?.token;
+      if (!token) return next(new Error('Authentication required'));
 
-			io.emit("activities", Array.from(userActivities.entries()));
-		});
+      const payload = await clerkClient.verifyToken(token);
+      socket.data.userId = payload.sub; // Clerk userId from verified token
+      next();
+    } catch (err) {
+      logger.warn({ err: err.message }, 'Socket auth failed');
+      next(new Error('Invalid or expired token'));
+    }
+  });
 
-		socket.on("update_activity", ({ userId, activity }) => {
-			console.log("activity updated", userId, activity);
-			userActivities.set(userId, activity);
-			io.emit("activity_updated", { userId, activity });
-		});
+  io.on('connection', (socket) => {
+    const userId = socket.data.userId; // always from verified token
 
-		socket.on("send_message", async (data) => {
-			try {
-				const { senderId, receiverId, content } = data;
+    userSockets.set(userId, socket.id);
+    userActivities.set(userId, IDLE_ACTIVITY);
 
-				const message = await Message.create({
-					senderId,
-					receiverId,
-					content,
-				});
+    io.emit('user_connected', userId);
+    socket.emit('users_online', Array.from(userSockets.keys()));
+    io.emit('activities', Array.from(userActivities.entries()));
 
-				// send to receiver in realtime, if they're online
-				const receiverSocketId = userSockets.get(receiverId);
-				if (receiverSocketId) {
-					io.to(receiverSocketId).emit("receive_message", message);
-				}
+    socket.on('update_activity', ({ activity }) => {
+      userActivities.set(userId, activity);
+      io.emit('activity_updated', { userId, activity });
+    });
 
-				socket.emit("message_sent", message);
-			} catch (error) {
-				console.error("Message error:", error);
-				socket.emit("message_error", error.message);
-			}
-		});
+    socket.on('send_message', async ({ receiverId, content }) => {
+      try {
+        const message = await Message.create({
+          senderId: userId,
+          receiverId,
+          content,
+        });
 
-		socket.on("disconnect", () => {
-			let disconnectedUserId;
-			for (const [userId, socketId] of userSockets.entries()) {
-				// find disconnected user
-				if (socketId === socket.id) {
-					disconnectedUserId = userId;
-					userSockets.delete(userId);
-					userActivities.delete(userId);
-					break;
-				}
-			}
-			if (disconnectedUserId) {
-				io.emit("user_disconnected", disconnectedUserId);
-			}
-		});
-	});
+        const receiverSocketId = userSockets.get(receiverId);
+        if (receiverSocketId) {
+          io.to(receiverSocketId).emit('receive_message', message);
+        }
+        socket.emit('message_sent', message);
+      } catch (error) {
+        logger.error({ error }, 'Socket send_message error');
+        socket.emit('message_error', 'Failed to send message');
+      }
+    });
+
+    socket.on('disconnect', () => {
+      userSockets.delete(userId);
+      userActivities.delete(userId);
+      io.emit('user_disconnected', userId);
+    });
+  });
+
+  return io;
 };

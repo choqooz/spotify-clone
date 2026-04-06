@@ -1,0 +1,356 @@
+import { spawn } from 'child_process';
+import path from 'path';
+import fs from 'fs';
+import downloadService from '../services/downloadService.js';
+import {
+  asyncHandler,
+  ValidationError,
+  ConflictError,
+} from '../middleware/error.middleware.js';
+
+// Queue para manejar múltiples descargas
+const downloadQueue = new Map();
+
+// Validación centralizada de formatos
+const VALID_FORMATS = {
+  song: [
+    'audioonly',
+    'audioandvideo',
+    'videoonly',
+    'audioonly_mp3',
+    'audioonly_flac',
+    'audioonly_wav',
+    'audioonly_m4a',
+    'audioonly_aac',
+    'audioonly_opus',
+    'mp3',
+    'flac',
+    'wav',
+    'm4a',
+    'aac',
+    'opus',
+    'mp4',
+    'webm',
+  ],
+  album: [
+    'audioonly',
+    'audioonly_mp3',
+    'audioonly_flac',
+    'audioonly_wav',
+    'audioonly_m4a',
+    'audioonly_aac',
+    'audioonly_opus',
+    'mp3',
+    'flac',
+    'wav',
+    'm4a',
+    'aac',
+    'opus',
+  ],
+};
+
+const validateFormat = (format, type) => {
+  return VALID_FORMATS[type].includes(format);
+};
+
+const createDownloadKey = (type, id, format, quality) => {
+  return `${type}_${id}_${format}_${quality}`;
+};
+
+export const downloadSong = asyncHandler(async (req, res) => {
+  const {
+    videoId,
+    format = 'audioonly',
+    quality = 'highest',
+    formatId,
+  } = req.body;
+
+  if (!videoId) {
+    throw new ValidationError('videoId is required');
+  }
+
+  if (!validateFormat(format, 'song')) {
+    throw new ValidationError(
+      `Invalid format. Valid formats: ${VALID_FORMATS.song.join(', ')}`
+    );
+  }
+
+  const downloadKey = createDownloadKey('song', videoId, format, quality);
+  if (downloadQueue.has(downloadKey)) {
+    throw new ConflictError('Download already in progress');
+  }
+
+  downloadQueue.set(downloadKey, {
+    type: 'song',
+    videoId,
+    format,
+    quality,
+    formatId,
+    startTime: new Date(),
+  });
+
+
+  try {
+    const result = await downloadService.downloadSong(videoId, {
+      format,
+      quality,
+      formatId,
+      downloadKey,
+      onProgress: (progress) => {
+        if (req.io) {
+          req.io.emit(`download-progress-${videoId}`, {
+            type: 'song',
+            ...progress,
+          });
+        }
+      },
+    });
+
+    downloadQueue.delete(downloadKey);
+
+    if (req.io) {
+      req.io.emit(`download-complete-${videoId}`, {
+        type: 'song',
+        success: true,
+        ...result,
+      });
+    }
+
+    res.json({
+      success: true,
+      message: 'Song downloaded successfully',
+      data: result,
+    });
+  } catch (downloadError) {
+    downloadQueue.delete(downloadKey);
+    throw downloadError;
+  }
+});
+
+export const downloadAlbum = asyncHandler(async (req, res) => {
+  const { albumId, format = 'mp3', quality = 'highest' } = req.body;
+
+  if (!albumId) {
+    throw new ValidationError('albumId is required');
+  }
+
+  if (!validateFormat(format, 'album')) {
+    throw new ValidationError(
+      `Invalid format for album. Valid formats: ${VALID_FORMATS.album.join(
+        ', '
+      )}`
+    );
+  }
+
+  const downloadKey = createDownloadKey('album', albumId, format, quality);
+  if (downloadQueue.has(downloadKey)) {
+    throw new ConflictError('Album download already in progress');
+  }
+
+  downloadQueue.set(downloadKey, {
+    type: 'album',
+    albumId,
+    format,
+    quality,
+    startTime: new Date(),
+  });
+
+
+  try {
+    const result = await downloadService.downloadAlbum(albumId, {
+      format,
+      quality,
+      downloadKey,
+      onProgress: (progress) => {
+        if (req.io) {
+          req.io.emit(`album-progress-${albumId}`, {
+            type: 'album',
+            ...progress,
+          });
+        }
+      },
+    });
+
+    downloadQueue.delete(downloadKey);
+
+    if (req.io) {
+      req.io.emit(`album-complete-${albumId}`, {
+        type: 'album',
+        success: true,
+        ...result,
+      });
+    }
+
+    res.json({
+      success: true,
+      message: `Album downloaded: ${result.downloadedSongs}/${result.totalSongs} songs`,
+      data: result,
+    });
+  } catch (downloadError) {
+    downloadQueue.delete(downloadKey);
+    throw downloadError;
+  }
+});
+
+export const getVideoInfo = asyncHandler(async (req, res) => {
+  const { videoId } = req.params;
+
+  if (!videoId) {
+    throw new ValidationError('videoId is required');
+  }
+
+  const info = await downloadService.getVideoInfo(videoId);
+  res.json({ success: true, data: info });
+});
+
+export const getAvailableFormats = asyncHandler(async (req, res) => {
+  const { videoId } = req.params;
+
+  if (!videoId) {
+    throw new ValidationError('videoId is required');
+  }
+
+  const formats = await downloadService.getAvailableFormats(videoId);
+  res.json({ success: true, data: formats });
+});
+
+export const getDownloadStatus = asyncHandler(async (req, res) => {
+  const { downloadKey } = req.params;
+
+  if (!downloadKey) {
+    throw new ValidationError('downloadKey is required');
+  }
+
+  const status = downloadQueue.get(downloadKey);
+  if (!status) {
+    return res.json({
+      success: true,
+      downloading: false,
+      message: 'No active download found',
+    });
+  }
+
+  res.json({
+    success: true,
+    downloading: true,
+    ...status,
+    duration: Date.now() - status.startTime.getTime(),
+  });
+});
+
+export const getActiveDownloads = asyncHandler(async (req, res) => {
+  const activeDownloads = Array.from(downloadQueue.entries()).map(
+    ([key, value]) => ({
+      downloadKey: key,
+      ...value,
+      duration: Date.now() - value.startTime.getTime(),
+    })
+  );
+
+  res.json({ success: true, activeDownloads, count: activeDownloads.length });
+});
+
+export const cancelDownload = asyncHandler(async (req, res) => {
+  const { downloadKey } = req.params;
+
+  if (!downloadKey) {
+    throw new ValidationError('downloadKey is required');
+  }
+
+  const wasActive = downloadQueue.has(downloadKey);
+  downloadQueue.delete(downloadKey);
+  downloadService.killDownload(downloadKey);
+
+  res.json({
+    success: true,
+    message: wasActive ? 'Download cancelled' : 'No active download found',
+    cancelled: wasActive,
+  });
+});
+
+export const cleanupFiles = asyncHandler(async (req, res) => {
+  const { maxAgeHours = 24 } = req.query;
+  await downloadService.cleanupOldFiles(parseInt(maxAgeHours));
+
+  res.json({
+    success: true,
+    message: `Cleanup completed for files older than ${maxAgeHours} hours`,
+  });
+});
+
+// Obtener URL de streaming directo (para evitar problemas de CORS con YouTube)
+export const getStreamingUrl = asyncHandler(async (req, res) => {
+  const { videoId } = req.params;
+
+  if (!videoId) {
+    throw new ValidationError('Video ID is required');
+  }
+
+
+  const streamingInfo = await downloadService.getStreamingUrl(videoId);
+
+  res.json({
+    success: true,
+    videoId,
+    ...streamingInfo,
+  });
+});
+
+// Stream a downloaded file to the browser and clean it up afterwards
+export const serveFile = asyncHandler(async (req, res) => {
+  const { filename } = req.params;
+
+  // Prevent path traversal attacks
+  if (!filename || filename.includes('..') || filename.includes('/')) {
+    throw new ValidationError('Invalid filename');
+  }
+
+  const filePath = path.join(downloadService.downloadsDir, filename);
+
+  if (!fs.existsSync(filePath)) {
+    return res.status(404).json({ success: false, error: { message: 'File not found or already downloaded' } });
+  }
+
+  // Set headers so the browser triggers a Save dialog
+  res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(filename)}"`);
+  res.setHeader('Content-Type', 'application/octet-stream');
+
+  const stream = fs.createReadStream(filePath);
+
+  stream.on('error', () => {
+    if (!res.headersSent) {
+      res.status(500).json({ success: false, error: { message: 'Error reading file' } });
+    }
+  });
+
+  // Delete file from server after successfully streaming it
+  stream.on('close', () => {
+    fs.unlink(filePath, () => {}); // best-effort cleanup
+  });
+
+  stream.pipe(res);
+});
+
+const spawnCheck = (cmd, args) =>
+  new Promise((resolve) => {
+    const proc = spawn(cmd, args);
+    proc.on('close', (code) => resolve(code === 0));
+    proc.on('error', () => resolve(false));
+  });
+
+export const downloadHealthCheck = asyncHandler(async (req, res) => {
+  const [ytdlpInstalled, ffmpegAvailable] = await Promise.all([
+    spawnCheck('yt-dlp', ['--version']),
+    spawnCheck('ffmpeg', ['-version']),
+  ]);
+
+  res.json({
+    success: true,
+    status: ytdlpInstalled && ffmpegAvailable ? 'healthy' : 'degraded',
+    ytdlpInstalled,
+    ffmpegAvailable,
+    activeDownloads: downloadQueue.size,
+    warnings: !ffmpegAvailable ? ['FFmpeg not found - audio conversion may fail'] : [],
+    timestamp: new Date().toISOString(),
+  });
+});

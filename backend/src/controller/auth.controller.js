@@ -1,24 +1,24 @@
-import { User } from "../models/user.model.js";
+import { User } from '../models/user.model.js';
+import { asyncHandler } from '../middleware/error.middleware.js';
 
-export const authCallback = async (req, res, next) => {
-	try {
-		const { id, firstName, lastName, imageUrl } = req.body;
+export const authCallback = asyncHandler(async (req, res) => {
+  const { id, firstName, lastName, imageUrl, email } = req.body;
 
-		// check if user already exists
-		const user = await User.findOne({ clerkId: id });
+  const isAdmin = process.env.ADMIN_EMAIL === email;
 
-		if (!user) {
-			// signup
-			await User.create({
-				clerkId: id,
-				fullName: `${firstName || ""} ${lastName || ""}`.trim(),
-				imageUrl,
-			});
-		}
+  const user = await User.findOne({ clerkId: id });
 
-		res.status(200).json({ success: true });
-	} catch (error) {
-		console.log("Error in auth callback", error);
-		next(error);
-	}
-};
+  if (!user) {
+    await User.create({
+      clerkId: id,
+      fullName: `${firstName || ''} ${lastName || ''}`.trim(),
+      imageUrl,
+      isAdmin,
+    });
+  } else if (isAdmin && !user.isAdmin) {
+    // Promote existing user to admin if email matches
+    await User.updateOne({ clerkId: id }, { isAdmin: true });
+  }
+
+  res.status(200).json({ success: true });
+});

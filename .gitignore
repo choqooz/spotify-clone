@@ -1,0 +1,25 @@
+# Environment
+.env
+.env.*
+!.env.sample
+
+# Dependencies
+node_modules/
+
+# Build artifacts
+dist/
+dist-ssr/
+
+# Logs
+*.log
+logs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# SDD / internal tooling
+.atl/
+
+# pnpm
+pnpm-debug.log*

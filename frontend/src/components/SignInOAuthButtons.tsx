@@ -1,7 +1,7 @@
 import { useSignIn } from "@clerk/clerk-react";
 import { Button } from "./ui/button";
 
-const SignInOAuthButtons = () => {
+export const SignInOAuthButtons = () => {
 	const { signIn, isLoaded } = useSignIn();
 
 	if (!isLoaded) {
@@ -23,4 +23,4 @@ const SignInOAuthButtons = () => {
 		</Button>
 	);
 };
-export default SignInOAuthButtons;
+

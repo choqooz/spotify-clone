@@ -1,23 +1,17 @@
-import { clerkClient } from "@clerk/express";
+import { User } from '../models/user.model.js';
+import {
+  UnauthorizedError,
+  ForbiddenError,
+  asyncHandler,
+} from './error.middleware.js';
 
-export const protectRoute = async (req, res, next) => {
-	if (!req.auth.userId) {
-		return res.status(401).json({ message: "Unauthorized - you must be logged in" });
-	}
-	next();
-};
+export const protectRoute = asyncHandler(async (req, res, next) => {
+  if (!req.auth?.userId) throw new UnauthorizedError('You must be logged in');
+  next();
+});
 
-export const requireAdmin = async (req, res, next) => {
-	try {
-		const currentUser = await clerkClient.users.getUser(req.auth.userId);
-		const isAdmin = process.env.ADMIN_EMAIL === currentUser.primaryEmailAddress?.emailAddress;
-
-		if (!isAdmin) {
-			return res.status(403).json({ message: "Unauthorized - you must be an admin" });
-		}
-
-		next();
-	} catch (error) {
-		next(error);
-	}
-};
+export const requireAdmin = asyncHandler(async (req, res, next) => {
+  const user = await User.findOne({ clerkId: req.auth.userId }).select('isAdmin');
+  if (!user?.isAdmin) throw new ForbiddenError('You must be an admin');
+  next();
+});

@@ -1,9 +1,9 @@
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Library } from "lucide-react";
-import AlbumsTable from "./AlbumsTable";
-import AddAlbumDialog from "./AddAlbumDialog";
+import { AlbumsTable } from "./AlbumsTable";
+import { AddAlbumDialog } from "./AddAlbumDialog";
 
-const AlbumsTabContent = () => {
+export const AlbumsTabContent = () => {
 	return (
 		<Card className='bg-zinc-800/50 border-zinc-700/50'>
 			<CardHeader>
@@ -25,4 +25,4 @@ const AlbumsTabContent = () => {
 		</Card>
 	);
 };
-export default AlbumsTabContent;
+

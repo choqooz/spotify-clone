@@ -1,23 +1,35 @@
 import { useAuthStore } from "@/stores/useAuthStore";
-import Header from "./components/Header";
-import DashboardStats from "./components/DashboardStats";
-import { Album, Music } from "lucide-react";
+import { useShallow } from "zustand/react/shallow";
+import { Header } from "./components/Header";
+import { DashboardStats } from "./components/DashboardStats";
+import { Album, Music, Users } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import SongsTabContent from "./components/SongsTabContent";
-import AlbumsTabContent from "./components/AlbumsTabContent";
+import { SongsTabContent } from "./components/SongsTabContent";
+import { AlbumsTabContent } from "./components/AlbumsTabContent";
+import { UsersTable } from "./components/UsersTable";
 import { useEffect } from "react";
 import { useMusicStore } from "@/stores/useMusicStore";
+import { useAdminUsersStore } from "@/stores/useAdminUsersStore";
 
-const AdminPage = () => {
-	const { isAdmin, isLoading } = useAuthStore();
+export const AdminPage = () => {
+	const { isAdmin, isLoading } = useAuthStore(
+		useShallow((s) => ({ isAdmin: s.isAdmin, isLoading: s.isLoading }))
+	);
 
-	const { fetchAlbums, fetchSongs, fetchStats } = useMusicStore();
+	const { fetchAlbums, fetchSongs, fetchStats } = useMusicStore(
+		useShallow((s) => ({ fetchAlbums: s.fetchAlbums, fetchSongs: s.fetchSongs, fetchStats: s.fetchStats }))
+	);
+
+	const { fetchUsers } = useAdminUsersStore(
+		useShallow((s) => ({ fetchUsers: s.fetchUsers }))
+	);
 
 	useEffect(() => {
 		fetchAlbums();
 		fetchSongs();
 		fetchStats();
-	}, [fetchAlbums, fetchSongs, fetchStats]);
+		fetchUsers();
+	}, [fetchAlbums, fetchSongs, fetchStats, fetchUsers]);
 
 	if (!isAdmin && !isLoading) return <div>Unauthorized</div>;
 
@@ -40,6 +52,10 @@ const AdminPage = () => {
 						<Album className='mr-2 size-4' />
 						Albums
 					</TabsTrigger>
+					<TabsTrigger value='users' className='data-[state=active]:bg-zinc-700'>
+						<Users className='mr-2 size-4' />
+						Users
+					</TabsTrigger>
 				</TabsList>
 
 				<TabsContent value='songs'>
@@ -48,8 +64,10 @@ const AdminPage = () => {
 				<TabsContent value='albums'>
 					<AlbumsTabContent />
 				</TabsContent>
+				<TabsContent value='users'>
+					<UsersTable />
+				</TabsContent>
 			</Tabs>
 		</div>
 	);
 };
-export default AdminPage;

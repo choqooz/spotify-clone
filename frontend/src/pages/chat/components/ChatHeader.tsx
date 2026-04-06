@@ -1,7 +1,7 @@
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { useChatStore } from "@/stores/useChatStore";
 
-const ChatHeader = () => {
+export const ChatHeader = () => {
 	const { selectedUser, onlineUsers } = useChatStore();
 
 	if (!selectedUser) return null;
@@ -11,7 +11,7 @@ const ChatHeader = () => {
 			<div className='flex items-center gap-3'>
 				<Avatar>
 					<AvatarImage src={selectedUser.imageUrl} />
-					<AvatarFallback>{selectedUser.fullName[0]}</AvatarFallback>
+					<AvatarFallback>{selectedUser.fullName}</AvatarFallback>
 				</Avatar>
 				<div>
 					<h2 className='font-medium'>{selectedUser.fullName}</h2>
@@ -23,4 +23,4 @@ const ChatHeader = () => {
 		</div>
 	);
 };
-export default ChatHeader;
+

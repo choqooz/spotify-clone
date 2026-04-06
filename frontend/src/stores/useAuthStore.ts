@@ -1,5 +1,6 @@
 import { axiosInstance } from "@/lib/axios";
-import { create } from "zustand";
+import { create } from 'zustand';
+import { getApiError } from '@/lib/apiError';
 
 interface AuthStore {
 	isAdmin: boolean;
@@ -20,8 +21,8 @@ export const useAuthStore = create<AuthStore>((set) => ({
 		try {
 			const response = await axiosInstance.get("/admin/check");
 			set({ isAdmin: response.data.admin });
-		} catch (error: any) {
-			set({ isAdmin: false, error: error.response.data.message });
+		} catch (error) {
+			set({ isAdmin: false, error: getApiError(error) });
 		} finally {
 			set({ isLoading: false });
 		}

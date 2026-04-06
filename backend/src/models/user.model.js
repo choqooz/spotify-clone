@@ -15,8 +15,12 @@ const userSchema = new mongoose.Schema(
 			required: true,
 			unique: true,
 		},
+		isAdmin: {
+			type: Boolean,
+			default: false,
+		},
 	},
-	{ timestamps: true } //  createdAt, updatedAt
+	{ timestamps: true }
 );
 
 export const User = mongoose.model("User", userSchema);

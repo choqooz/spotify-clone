@@ -1,11 +1,14 @@
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useMusicStore } from "@/stores/useMusicStore";
+import { useShallow } from "zustand/react/shallow";
 import { Calendar, Music, Trash2 } from "lucide-react";
 import { useEffect } from "react";
 
-const AlbumsTable = () => {
-	const { albums, deleteAlbum, fetchAlbums } = useMusicStore();
+export const AlbumsTable = () => {
+	const { albums, deleteAlbum, fetchAlbums } = useMusicStore(
+		useShallow((s) => ({ albums: s.albums, deleteAlbum: s.deleteAlbum, fetchAlbums: s.fetchAlbums }))
+	);
 
 	useEffect(() => {
 		fetchAlbums();
@@ -61,4 +64,4 @@ const AlbumsTable = () => {
 		</Table>
 	);
 };
-export default AlbumsTable;
+

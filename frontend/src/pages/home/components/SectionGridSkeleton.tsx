@@ -1,4 +1,4 @@
-const SectionGridSkeleton = () => {
+export const SectionGridSkeleton = () => {
 	return (
 		<div className='mb-8'>
 			<div className='h-8 w-48 bg-zinc-800 rounded mb-4 animate-pulse' />
@@ -14,4 +14,4 @@ const SectionGridSkeleton = () => {
 		</div>
 	);
 };
-export default SectionGridSkeleton;
+

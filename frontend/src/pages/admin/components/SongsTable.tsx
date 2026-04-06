@@ -1,10 +1,13 @@
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useMusicStore } from "@/stores/useMusicStore";
+import { useShallow } from "zustand/react/shallow";
 import { Calendar, Trash2 } from "lucide-react";
 
-const SongsTable = () => {
-	const { songs, isLoading, error, deleteSong } = useMusicStore();
+export const SongsTable = () => {
+	const { songs, isLoading, error, deleteSong } = useMusicStore(
+		useShallow((s) => ({ songs: s.songs, isLoading: s.isLoading, error: s.error, deleteSong: s.deleteSong }))
+	);
 
 	if (isLoading) {
 		return (
@@ -67,4 +70,4 @@ const SongsTable = () => {
 		</Table>
 	);
 };
-export default SongsTable;
+
