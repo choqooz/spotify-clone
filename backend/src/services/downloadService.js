@@ -20,12 +20,24 @@ class DownloadService {
     try {
       await fs.mkdir(this.downloadsDir, { recursive: true });
 
-      // Check if cookies file exists (from Render Secret Files or local)
+      // Render Secret Files are mounted read-only at /etc/secrets/.
+      // yt-dlp tries to write updated cookies back after use → OSError on read-only fs.
+      // Fix: copy the file to a writable path and use that instead.
+      const writableCookiesPath = path.join(process.cwd(), 'yt-cookies.txt');
       try {
         await fs.access(this.cookiesFile);
-        logger.info({ path: this.cookiesFile }, 'YouTube cookies file found');
+        await fs.copyFile(this.cookiesFile, writableCookiesPath);
+        this.cookiesFile = writableCookiesPath;
+        logger.info({ path: writableCookiesPath }, 'YouTube cookies copied to writable location');
       } catch {
-        logger.warn('No YouTube cookies file found — downloads may be blocked on cloud');
+        // Secret file not present — check if a writable copy already exists
+        try {
+          await fs.access(writableCookiesPath);
+          this.cookiesFile = writableCookiesPath;
+          logger.info({ path: writableCookiesPath }, 'YouTube cookies found at writable location');
+        } catch {
+          logger.warn('No YouTube cookies file found — downloads may be blocked on cloud');
+        }
       }
 
       await this._runYtDlp(['--version']);
