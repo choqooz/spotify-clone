@@ -7,6 +7,7 @@ import { logger } from '../lib/logger.js';
 class DownloadService {
   constructor() {
     this.downloadsDir = path.join(process.cwd(), 'downloads');
+    this.cookiesFile = path.join(process.cwd(), 'yt-cookies.txt');
     this.ffmpegAvailable = false;
     this.initPromise = this.init();
     /** @type {Map<string, import('child_process').ChildProcess>} */
@@ -16,6 +17,12 @@ class DownloadService {
   async init() {
     try {
       await fs.mkdir(this.downloadsDir, { recursive: true });
+
+      // Write YouTube cookies from env var if provided (needed for cloud deployments)
+      if (process.env.YOUTUBE_COOKIES) {
+        await fs.writeFile(this.cookiesFile, process.env.YOUTUBE_COOKIES, 'utf-8');
+        logger.info('YouTube cookies written from environment variable');
+      }
 
       await this._runYtDlp(['--version']);
       logger.info('yt-dlp is ready');
@@ -55,8 +62,18 @@ class DownloadService {
     });
   }
 
-  _runYtDlp(args) {
-    return this._runCmd('yt-dlp', args);
+  async _cookiesArgs() {
+    try {
+      await fs.access(this.cookiesFile);
+      return ['--cookies', this.cookiesFile];
+    } catch {
+      return [];
+    }
+  }
+
+  async _runYtDlp(args) {
+    const cookiesArgs = await this._cookiesArgs();
+    return this._runCmd('yt-dlp', [...cookiesArgs, ...args]);
   }
 
   // Fetch video info as parsed JSON using --dump-json
@@ -71,9 +88,10 @@ class DownloadService {
   }
 
   // Run a download with live progress parsing from yt-dlp stderr
-  _download(url, args, onProgress, downloadKey) {
+  async _download(url, args, onProgress, downloadKey) {
+    const cookiesArgs = await this._cookiesArgs();
     return new Promise((resolve, reject) => {
-      const allArgs = [...args, '--progress', '--newline', '--no-warnings', url];
+      const allArgs = [...cookiesArgs, ...args, '--progress', '--newline', '--no-warnings', url];
       const proc = spawn('yt-dlp', allArgs);
       if (downloadKey) this._activeProcs.set(downloadKey, proc);
       let stderr = '';
