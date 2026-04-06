@@ -110,15 +110,80 @@ class DownloadService {
     return this._runCmd('yt-dlp', [...cookiesArgs, ...this._ytDownloadArgs(), ...args]);
   }
 
-  // Fetch video info as parsed JSON using --dump-json.
-  // Does NOT force mweb,web player clients — yt-dlp auto-selects (ios/tv_embedded)
-  // which return proper DASH format IDs without needing a PO token on datacenter IPs.
-  // --no-check-formats skips format availability validation that fails on datacenter IPs.
-  // No --format selector needed: --dump-json returns ALL formats regardless.
+  // Fetch video info via Innertube (youtubei.js) — used for format listing.
+  // Returns data shaped like yt-dlp JSON so existing format parsing works unchanged.
+  // Innertube connects to YouTube's InnerTube API directly, bypassing yt-dlp's
+  // format selection which fails on datacenter IPs.
+  async _getInfoViaInnertube(videoId) {
+    const yt = await getInnertube();
+    const info = await yt.getBasicInfo(videoId);
+
+    const streamingData = info.streaming_data;
+    if (!streamingData) {
+      throw new Error('No streaming data available for this video');
+    }
+
+    const formats = [];
+
+    const mapFormat = (f) => {
+      const mime = f.mime_type ?? '';
+      const [typeContainer, codecStr] = mime.split(';');
+      const [type, container] = (typeContainer ?? '').split('/');
+      const codecs = (codecStr ?? '').replace(/.*codecs="?([^"]*)"?/, '$1').trim();
+      const codecParts = codecs.split(',').map((c) => c.trim());
+      const isAudio = type === 'audio';
+      const isMuxed = codecParts.length > 1; // e.g. "avc1.42001E, mp4a.40.2"
+
+      let ext = container ?? 'unknown';
+      if (ext === 'mp4') ext = isAudio ? 'm4a' : 'mp4';
+
+      return {
+        format_id: String(f.itag),
+        ext,
+        acodec: isAudio ? codecParts[0] : (isMuxed ? codecParts[1] : 'none'),
+        vcodec: isAudio ? 'none' : codecParts[0],
+        abr: isAudio
+          ? Math.round((f.bitrate ?? 0) / 1000)
+          : (isMuxed ? Math.round((f.bitrate ?? 0) / 1000 * 0.1) : 0),
+        vbr: isAudio ? 0 : Math.round((f.bitrate ?? 0) / 1000),
+        asr: f.audio_sample_rate ? Number(f.audio_sample_rate) : undefined,
+        height: f.height ?? null,
+        width: f.width ?? null,
+        fps: f.fps ?? null,
+        filesize: f.content_length ? Number(f.content_length) : 0,
+        filesize_approx: f.content_length ? Number(f.content_length) : 0,
+        format_note: f.quality_label ?? f.audio_quality ?? '',
+        format: `${f.itag} - ${f.quality_label ?? f.audio_quality ?? 'unknown'}`,
+      };
+    };
+
+    // Muxed formats (video+audio combined)
+    for (const f of streamingData.formats ?? []) {
+      formats.push(mapFormat(f));
+    }
+    // Adaptive formats (separate video-only / audio-only)
+    for (const f of streamingData.adaptive_formats ?? []) {
+      formats.push(mapFormat(f));
+    }
+
+    return {
+      id: info.basic_info?.id ?? videoId,
+      title: info.basic_info?.title ?? 'Unknown',
+      uploader: info.basic_info?.author ?? 'Unknown',
+      duration: info.basic_info?.duration ?? 0,
+      thumbnail: info.basic_info?.thumbnail?.[0]?.url ?? '',
+      formats,
+    };
+  }
+
+  // Fetch video info via yt-dlp --dump-json — used for downloads.
+  // Uses mweb,web player clients with cookies for bot detection bypass.
   async _getInfo(url) {
     const cookiesArgs = await this._cookiesArgs();
     const { stdout } = await this._runCmd('yt-dlp', [
       ...cookiesArgs,
+      ...this._ytDownloadArgs(),
+      '--format', 'bestaudio/best',
       '--no-check-formats',
       '--dump-json',
       '--no-playlist',
@@ -317,10 +382,10 @@ class DownloadService {
   async getAvailableFormats(videoId) {
     await this.ensureInitialized();
 
-    const videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
-
     try {
-      const info = await this._getInfo(videoUrl);
+      // Use Innertube for format listing — yt-dlp's --dump-json requires
+      // format selection which fails on datacenter IPs.
+      const info = await this._getInfoViaInnertube(videoId);
 
       if (!info.formats || !Array.isArray(info.formats)) {
         return { audioFormats: [], videoFormats: [] };
