@@ -96,20 +96,28 @@ class DownloadService {
     }
   }
 
-  // mweb/web clients use browser cookies for auth (android/ios ignore them).
-  // Browser cookies from a logged-in YouTube session bypass the bot check.
-  _ytBaseArgs() {
+  // mweb+web for downloads: mweb bypasses bot checks, web provides DASH fallback.
+  // web-only for info/format listing: mweb returns HLS (no DASH format IDs), which
+  // breaks getAvailableFormats. For --dump-json, web gives proper DASH format lists.
+  _ytDownloadArgs() {
     return ['--extractor-args', 'youtube:player_client=mweb,web'];
+  }
+
+  _ytInfoArgs() {
+    return ['--extractor-args', 'youtube:player_client=web'];
   }
 
   async _runYtDlp(args) {
     const cookiesArgs = await this._cookiesArgs();
-    return this._runCmd('yt-dlp', [...cookiesArgs, ...this._ytBaseArgs(), ...args]);
+    return this._runCmd('yt-dlp', [...cookiesArgs, ...this._ytDownloadArgs(), ...args]);
   }
 
   // Fetch video info as parsed JSON using --dump-json
   async _getInfo(url) {
-    const { stdout } = await this._runYtDlp([
+    const cookiesArgs = await this._cookiesArgs();
+    const { stdout } = await this._runCmd('yt-dlp', [
+      ...cookiesArgs,
+      ...this._ytInfoArgs(),
       '--dump-json',
       '--no-playlist',
       '--no-warnings',
@@ -122,7 +130,7 @@ class DownloadService {
   async _download(url, args, onProgress, downloadKey) {
     const cookiesArgs = await this._cookiesArgs();
     return new Promise((resolve, reject) => {
-      const allArgs = [...cookiesArgs, ...this._ytBaseArgs(), ...args, '--progress', '--newline', '--no-warnings', url];
+      const allArgs = [...cookiesArgs, ...this._ytDownloadArgs(), ...args, '--progress', '--newline', '--no-warnings', url];
       const proc = spawn('yt-dlp', allArgs);
       if (downloadKey) this._activeProcs.set(downloadKey, proc);
       let stderr = '';
