@@ -111,18 +111,15 @@ class DownloadService {
   }
 
   // Fetch video info as parsed JSON using --dump-json.
-  // Uses mweb,web to bypass bot detection (same as downloads).
-  // --format bestaudio/best prevents "Requested format is not available": with mweb+web,
-  // yt-dlp merges HLS (mweb) and DASH (web) streams; the default bestvideo+bestaudio
-  // selector fails when those two stream types can't be merged. bestaudio/best always
-  // resolves. NOTE: --dump-json still returns ALL formats in the `formats` array —
-  // the --format flag only affects the top-level selected format, not the full list.
+  // Does NOT force mweb,web player clients — yt-dlp auto-selects (ios/tv_embedded)
+  // which return proper DASH format IDs without needing a PO token on datacenter IPs.
+  // --no-check-formats skips format availability validation that fails on datacenter IPs.
+  // No --format selector needed: --dump-json returns ALL formats regardless.
   async _getInfo(url) {
     const cookiesArgs = await this._cookiesArgs();
     const { stdout } = await this._runCmd('yt-dlp', [
       ...cookiesArgs,
-      ...this._ytDownloadArgs(),
-      '--format', 'bestaudio/best',
+      '--no-check-formats',
       '--dump-json',
       '--no-playlist',
       '--no-warnings',
