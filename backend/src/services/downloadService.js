@@ -96,15 +96,13 @@ class DownloadService {
     }
   }
 
-  // mweb+web for downloads: mweb bypasses bot checks, web provides DASH fallback.
-  // web-only for info/format listing: mweb returns HLS (no DASH format IDs), which
-  // breaks getAvailableFormats. For --dump-json, web gives proper DASH format lists.
+  // mweb+web for downloads: mweb bypasses bot checks on datacenter IPs using cookies.
+  // No client override for info/format listing: yt-dlp auto-selects (ios/tv_embedded)
+  // which give proper DASH format IDs without PO token. Forcing 'web' requires a PO
+  // token on datacenter IPs and returns "Requested format is not available". Forcing
+  // 'mweb' returns HLS-only (no individual DASH format IDs).
   _ytDownloadArgs() {
     return ['--extractor-args', 'youtube:player_client=mweb,web'];
-  }
-
-  _ytInfoArgs() {
-    return ['--extractor-args', 'youtube:player_client=web'];
   }
 
   async _runYtDlp(args) {
@@ -112,12 +110,13 @@ class DownloadService {
     return this._runCmd('yt-dlp', [...cookiesArgs, ...this._ytDownloadArgs(), ...args]);
   }
 
-  // Fetch video info as parsed JSON using --dump-json
+  // Fetch video info as parsed JSON using --dump-json.
+  // Uses yt-dlp's default client selection (no override) so it can pick ios/tv_embedded
+  // which work on datacenter IPs without PO tokens and return full DASH format lists.
   async _getInfo(url) {
     const cookiesArgs = await this._cookiesArgs();
     const { stdout } = await this._runCmd('yt-dlp', [
       ...cookiesArgs,
-      ...this._ytInfoArgs(),
       '--dump-json',
       '--no-playlist',
       '--no-warnings',
