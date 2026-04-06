@@ -87,9 +87,15 @@ class DownloadService {
     }
   }
 
+  // YouTube bot-check bypass: use TV embedded + web player clients.
+  // These don't require authentication and work on cloud IPs.
+  _ytBaseArgs() {
+    return ['--extractor-args', 'youtube:player_client=tv_embedded,web'];
+  }
+
   async _runYtDlp(args) {
     const cookiesArgs = await this._cookiesArgs();
-    return this._runCmd('yt-dlp', [...cookiesArgs, ...args]);
+    return this._runCmd('yt-dlp', [...cookiesArgs, ...this._ytBaseArgs(), ...args]);
   }
 
   // Fetch video info as parsed JSON using --dump-json
@@ -107,7 +113,7 @@ class DownloadService {
   async _download(url, args, onProgress, downloadKey) {
     const cookiesArgs = await this._cookiesArgs();
     return new Promise((resolve, reject) => {
-      const allArgs = [...cookiesArgs, ...args, '--progress', '--newline', '--no-warnings', url];
+      const allArgs = [...cookiesArgs, ...this._ytBaseArgs(), ...args, '--progress', '--newline', '--no-warnings', url];
       const proc = spawn('yt-dlp', allArgs);
       if (downloadKey) this._activeProcs.set(downloadKey, proc);
       let stderr = '';
