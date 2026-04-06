@@ -1,6 +1,7 @@
 import { spawn } from 'child_process';
 import path from 'path';
 import fs from 'fs/promises';
+import { Innertube } from 'youtubei.js';
 import { getInnertube } from '../lib/ytmusic.js';
 import { logger } from '../lib/logger.js';
 
@@ -110,17 +111,84 @@ class DownloadService {
     return this._runCmd('yt-dlp', [...cookiesArgs, ...this._ytDownloadArgs(), ...args]);
   }
 
+  // Fallback format options when streaming data is unavailable (datacenter IP blocked).
+  // Uses generic yt-dlp format strings that resolve at download time with mweb+web+cookies.
+  _defaultFormats() {
+    return [
+      { format_id: 'bestaudio', ext: 'm4a', acodec: 'aac', vcodec: 'none', abr: 128, vbr: 0, height: null, width: null, fps: null, filesize: 0, filesize_approx: 0, format_note: 'Best Audio', format: 'bestaudio - Best Audio' },
+      { format_id: 'bestaudio', ext: 'webm', acodec: 'opus', vcodec: 'none', abr: 160, vbr: 0, height: null, width: null, fps: null, filesize: 0, filesize_approx: 0, format_note: 'Best Audio Opus', format: 'bestaudio - Best Audio Opus' },
+      { format_id: 'best', ext: 'mp4', acodec: 'aac', vcodec: 'h264', abr: 128, vbr: 2000, height: 720, width: 1280, fps: 30, filesize: 0, filesize_approx: 0, format_note: '720p', format: 'best - 720p' },
+    ];
+  }
+
   // Fetch video info via Innertube (youtubei.js) — used for format listing.
   // Returns data shaped like yt-dlp JSON so existing format parsing works unchanged.
   // Innertube connects to YouTube's InnerTube API directly, bypassing yt-dlp's
   // format selection which fails on datacenter IPs.
-  async _getInfoViaInnertube(videoId) {
-    const yt = await getInnertube();
-    const info = await yt.getBasicInfo(videoId);
+  // Parse Netscape cookie file to a cookie header string for Innertube.
+  async _readCookieString() {
+    try {
+      const raw = await fs.readFile(this.cookiesFile, 'utf-8');
+      return raw
+        .split('\n')
+        .filter((line) => line && !line.startsWith('#'))
+        .map((line) => {
+          const parts = line.split('\t');
+          return parts.length >= 7 ? `${parts[5]}=${parts[6]}` : null;
+        })
+        .filter(Boolean)
+        .join('; ');
+    } catch {
+      return '';
+    }
+  }
 
-    const streamingData = info.streaming_data;
+  async _getInfoViaInnertube(videoId) {
+    // Create Innertube instance with cookies for authenticated access.
+    // Cookies help bypass bot detection on datacenter IPs.
+    const cookieStr = await this._readCookieString();
+    const createOpts = {
+      generate_session_locally: true,
+      retrieve_player: true,
+    };
+    if (cookieStr) createOpts.cookie = cookieStr;
+
+    let yt;
+    try {
+      yt = await Innertube.create(createOpts);
+    } catch {
+      yt = await getInnertube(); // fallback to shared instance
+    }
+
+    // Try multiple clients — WEB gets blocked on datacenter IPs, ANDROID/IOS
+    // use different auth and often bypass bot detection.
+    let info;
+    let streamingData;
+    for (const client of ['ANDROID', 'IOS', 'WEB']) {
+      try {
+        info = await yt.getInfo(videoId, { client });
+        streamingData = info.streaming_data;
+        if (streamingData) {
+          logger.info({ videoId, client }, 'Got streaming data via Innertube');
+          break;
+        }
+      } catch (err) {
+        logger.warn({ videoId, client, err: err.message }, 'Innertube client failed');
+      }
+    }
+
     if (!streamingData) {
-      throw new Error('No streaming data available for this video');
+      // All clients failed — return default format options so user can still
+      // download. yt-dlp with mweb+web+cookies may succeed at download time.
+      const title = info?.basic_info?.title ?? 'Unknown';
+      return {
+        id: videoId,
+        title,
+        uploader: info?.basic_info?.author ?? 'Unknown',
+        duration: info?.basic_info?.duration ?? 0,
+        thumbnail: info?.basic_info?.thumbnail?.[0]?.url ?? '',
+        formats: this._defaultFormats(),
+      };
     }
 
     const formats = [];
