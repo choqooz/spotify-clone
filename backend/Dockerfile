@@ -25,10 +25,8 @@ WORKDIR /app
 # System deps: ffmpeg + python/pip (for yt-dlp and PO token provider)
 RUN apk add --no-cache ffmpeg python3 py3-pip
 
-# Install yt-dlp and bgutil PO token provider via pip.
-# bgutil-yt-dlp-pot-provider generates YouTube PO tokens required on cloud IPs.
-# Uses Node.js (already in this image) to run the token generation script.
-RUN pip3 install --break-system-packages yt-dlp bgutil-yt-dlp-pot-provider \
+# Install yt-dlp via pip — always gets the latest version, no Docker cache issues.
+RUN pip3 install --break-system-packages yt-dlp \
   && yt-dlp --version
 
 # Install backend dependencies (production only)

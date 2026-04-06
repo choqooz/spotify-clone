@@ -96,11 +96,10 @@ class DownloadService {
     }
   }
 
-  // bgutil-yt-dlp-pot-provider (installed in Dockerfile) auto-generates PO tokens.
-  // Use 'web' as primary client — bgutil handles the token injection transparently.
-  // mweb as fallback (lighter client, sometimes bypasses without token).
+  // YouTube bot-check bypass for cloud/datacenter IPs.
+  // android/ios clients don't require PO tokens unlike the web client.
   _ytBaseArgs() {
-    return ['--extractor-args', 'youtube:player_client=web,mweb'];
+    return ['--extractor-args', 'youtube:player_client=android,ios,tv_embedded'];
   }
 
   async _runYtDlp(args) {
