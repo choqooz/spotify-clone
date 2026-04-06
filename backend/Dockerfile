@@ -10,6 +10,11 @@ COPY frontend/package.json frontend/pnpm-lock.yaml* ./
 RUN pnpm install --frozen-lockfile
 
 COPY frontend/ ./
+
+# Build-time env vars for Vite (must be declared as ARG to be available during build)
+ARG VITE_CLERK_PUBLISHABLE_KEY
+ENV VITE_CLERK_PUBLISHABLE_KEY=$VITE_CLERK_PUBLISHABLE_KEY
+
 RUN pnpm build
 
 # ── Stage 2: Runtime ──────────────────────────────────────────────────────────
