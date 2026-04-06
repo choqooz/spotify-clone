@@ -22,13 +22,13 @@ FROM node:22-alpine AS runtime
 
 WORKDIR /app
 
-# System deps: ffmpeg + curl (for yt-dlp download)
-RUN apk add --no-cache ffmpeg python3 curl
+# System deps: ffmpeg + python/pip (for yt-dlp and PO token provider)
+RUN apk add --no-cache ffmpeg python3 py3-pip
 
-# Download latest yt-dlp binary from GitHub releases
-RUN curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp \
-      -o /usr/local/bin/yt-dlp \
-  && chmod +x /usr/local/bin/yt-dlp \
+# Install yt-dlp and bgutil PO token provider via pip.
+# bgutil-yt-dlp-pot-provider generates YouTube PO tokens required on cloud IPs.
+# Uses Node.js (already in this image) to run the token generation script.
+RUN pip3 install --break-system-packages yt-dlp bgutil-yt-dlp-pot-provider \
   && yt-dlp --version
 
 # Install backend dependencies (production only)

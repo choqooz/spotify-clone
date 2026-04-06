@@ -96,10 +96,11 @@ class DownloadService {
     }
   }
 
-  // YouTube bot-check bypass: android/ios clients bypass datacenter IP restrictions
-  // without requiring auth cookies. tv_embedded as last fallback.
+  // bgutil-yt-dlp-pot-provider (installed in Dockerfile) auto-generates PO tokens.
+  // Use 'web' as primary client — bgutil handles the token injection transparently.
+  // mweb as fallback (lighter client, sometimes bypasses without token).
   _ytBaseArgs() {
-    return ['--extractor-args', 'youtube:player_client=android,ios,tv_embedded'];
+    return ['--extractor-args', 'youtube:player_client=web,mweb'];
   }
 
   async _runYtDlp(args) {
