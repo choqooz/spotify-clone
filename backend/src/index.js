@@ -47,6 +47,9 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 const PORT = process.env.PORT;
 
+// Trust Render/Cloudflare proxy so rate limiting and IPs work correctly
+app.set('trust proxy', 1);
+
 const httpServer = createServer(app);
 const io = initializeSocket(httpServer);
 

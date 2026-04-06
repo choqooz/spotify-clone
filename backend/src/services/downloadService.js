@@ -7,7 +7,9 @@ import { logger } from '../lib/logger.js';
 class DownloadService {
   constructor() {
     this.downloadsDir = path.join(process.cwd(), 'downloads');
-    this.cookiesFile = path.join(process.cwd(), 'yt-cookies.txt');
+    // Check Render Secret Files path first, fall back to local
+    this.cookiesFile = process.env.YOUTUBE_COOKIES_PATH
+      ?? '/etc/secrets/yt-cookies.txt';
     this.ffmpegAvailable = false;
     this.initPromise = this.init();
     /** @type {Map<string, import('child_process').ChildProcess>} */
@@ -18,10 +20,12 @@ class DownloadService {
     try {
       await fs.mkdir(this.downloadsDir, { recursive: true });
 
-      // Write YouTube cookies from env var if provided (needed for cloud deployments)
-      if (process.env.YOUTUBE_COOKIES) {
-        await fs.writeFile(this.cookiesFile, process.env.YOUTUBE_COOKIES, 'utf-8');
-        logger.info('YouTube cookies written from environment variable');
+      // Check if cookies file exists (from Render Secret Files or local)
+      try {
+        await fs.access(this.cookiesFile);
+        logger.info({ path: this.cookiesFile }, 'YouTube cookies file found');
+      } catch {
+        logger.warn('No YouTube cookies file found — downloads may be blocked on cloud');
       }
 
       await this._runYtDlp(['--version']);

@@ -21,7 +21,7 @@ interface LyricsStore {
   isVisible: boolean;
   offset: number; // Offset in seconds to adjust lyrics timing
 
-  fetchLyrics: (videoId: string) => Promise<void>;
+  fetchLyrics: (videoId: string, title?: string, artist?: string) => Promise<void>;
   updateCurrentLyric: (currentTime: number) => void;
   toggleLyrics: () => void;
   showLyrics: () => void;
@@ -38,11 +38,15 @@ export const useLyricsStore = create<LyricsStore>((set, get) => ({
   isVisible: false,
   offset: 0.77, // Default offset: advance lyrics by 0.77 seconds
 
-  fetchLyrics: async (videoId: string) => {
+  fetchLyrics: async (videoId: string, title?: string, artist?: string) => {
     set({ isLoading: true, error: null });
 
     try {
-      const response = await axiosInstance.get(`/youtube/lyrics/${videoId}`);
+      const params = new URLSearchParams();
+      if (title) params.set('title', title);
+      if (artist) params.set('artist', artist);
+      const query = params.toString() ? `?${params}` : '';
+      const response = await axiosInstance.get(`/youtube/lyrics/${videoId}${query}`);
       set({
         lyricsData: response.data.data,
         isLoading: false,

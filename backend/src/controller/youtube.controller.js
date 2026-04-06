@@ -198,21 +198,29 @@ export const getAlbumDetails = asyncHandler(async (req, res) => {
 
 export const getLyrics = asyncHandler(async (req, res) => {
   const { videoId } = req.params;
+  const { title: titleParam, artist: artistParam } = req.query;
 
   if (!videoId) throw new ValidationError('videoId is required');
 
-  const yt = await getInnertube();
-  const info = await yt.music.getInfo(videoId);
+  let trackName = titleParam;
+  let artistName = artistParam ?? '';
+  let duration = 0;
 
-  if (!info) throw new NotFoundError('Song');
-
-  const basic = info.basic_info;
-  const trackName = basic.title;
-  const artistName = basic.author ?? basic.channel?.name ?? '';
-  const duration = basic.duration ?? 0;
-
+  // If title not provided via query params, fetch from YouTube Music
   if (!trackName) {
-    throw new ValidationError('Missing track information');
+    const yt = await getInnertube();
+    const info = await yt.music.getInfo(videoId);
+
+    if (!info) throw new NotFoundError('Song');
+
+    const basic = info.basic_info;
+    trackName = basic.title;
+    artistName = basic.author ?? basic.channel?.name ?? artistName;
+    duration = basic.duration ?? 0;
+
+    if (!trackName) {
+      throw new ValidationError('Missing track information');
+    }
   }
 
   const lrcQuery = { track_name: trackName, ...(artistName && { artist_name: artistName }) };

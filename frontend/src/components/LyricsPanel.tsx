@@ -49,7 +49,7 @@ export const LyricsPanel = () => {
   // Auto-fetch lyrics when a song is selected
   useEffect(() => {
     if (currentSong?.videoId && isVisible) {
-      fetchLyrics(currentSong.videoId);
+      fetchLyrics(currentSong.videoId, currentSong.title, currentSong.artist);
     }
   }, [currentSong?.videoId, isVisible, fetchLyrics]);
 
@@ -217,7 +217,7 @@ export const LyricsPanel = () => {
               <p className="text-red-400 mb-4">{error}</p>
               {currentSong?.videoId && (
                 <Button
-                  onClick={() => fetchLyrics(currentSong.videoId!)}
+                  onClick={() => fetchLyrics(currentSong.videoId!, currentSong.title, currentSong.artist)}
                   variant="outline"
                   size="sm">
                   Try again
@@ -297,7 +297,7 @@ export const LyricsPanel = () => {
                 {lyricsData?.message || 'No lyrics loaded'}
               </p>
               <Button
-                onClick={() => fetchLyrics(currentSong.videoId!)}
+                onClick={() => fetchLyrics(currentSong.videoId!, currentSong.title, currentSong.artist)}
                 variant="outline"
                 size="sm">
                 {lyricsData ? 'Try again' : 'Load lyrics'}
