@@ -244,28 +244,35 @@ class DownloadService {
     };
   }
 
-  // Fetch video info via yt-dlp --dump-json — used for downloads.
-  // Uses mweb,web player clients with cookies for bot detection bypass.
+  // Fetch video info — tries yt-dlp first (has full format data for downloads),
+  // falls back to Innertube if yt-dlp fails (common on datacenter IPs).
   async _getInfo(url) {
-    const cookiesArgs = await this._cookiesArgs();
-    const { stdout } = await this._runCmd('yt-dlp', [
-      ...cookiesArgs,
-      ...this._ytDownloadArgs(),
-      '--format', 'bestaudio/best',
-      '--no-check-formats',
-      '--dump-json',
-      '--no-playlist',
-      '--no-warnings',
-      url,
-    ]);
-    return JSON.parse(stdout.trim());
+    try {
+      const cookiesArgs = await this._cookiesArgs();
+      const { stdout } = await this._runCmd('yt-dlp', [
+        ...cookiesArgs,
+        ...this._ytDownloadArgs(),
+        '--format', 'bestaudio/best',
+        '--no-check-formats',
+        '--dump-json',
+        '--no-playlist',
+        '--no-warnings',
+        url,
+      ]);
+      return JSON.parse(stdout.trim());
+    } catch {
+      // yt-dlp failed — extract videoId from URL and use Innertube for basic info
+      const videoId = url.match(/[?&]v=([^&]+)/)?.[1] ?? url.split('/').pop();
+      logger.warn({ videoId }, 'yt-dlp _getInfo failed, falling back to Innertube');
+      return this._getInfoViaInnertube(videoId);
+    }
   }
 
   // Run a download with live progress parsing from yt-dlp stderr
   async _download(url, args, onProgress, downloadKey) {
     const cookiesArgs = await this._cookiesArgs();
     return new Promise((resolve, reject) => {
-      const allArgs = [...cookiesArgs, ...this._ytDownloadArgs(), ...args, '--progress', '--newline', '--no-warnings', url];
+      const allArgs = [...cookiesArgs, ...this._ytDownloadArgs(), '--no-check-formats', ...args, '--progress', '--newline', '--no-warnings', url];
       const proc = spawn('yt-dlp', allArgs);
       if (downloadKey) this._activeProcs.set(downloadKey, proc);
       let stderr = '';
@@ -318,9 +325,14 @@ class DownloadService {
 
   // Translate our format/quality options to yt-dlp CLI format strings + extra args
   _buildCliFormat(format, quality, formatId) {
-    // Specific format ID chosen by the user (from getAvailableFormats)
+    // Specific format ID chosen by the user (from getAvailableFormats).
+    // Add generic fallbacks because Innertube format IDs (itag numbers) may not
+    // be available to yt-dlp which uses different player clients on datacenter IPs.
     if (formatId && formatId !== 'best' && formatId !== 'converted') {
-      return { formatStr: formatId, extraArgs: [] };
+      const fallback = formatId.includes('+')
+        ? `${formatId}/bestvideo+bestaudio/best`
+        : `${formatId}/bestaudio/best`;
+      return { formatStr: fallback, extraArgs: [] };
     }
 
     switch (format) {
