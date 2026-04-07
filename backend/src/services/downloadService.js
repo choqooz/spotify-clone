@@ -1,7 +1,8 @@
 import { spawn } from 'child_process';
 import path from 'path';
 import fs from 'fs/promises';
-import { Innertube } from 'youtubei.js';
+import { createWriteStream } from 'fs';
+import { Innertube, Utils } from 'youtubei.js';
 import { getInnertube } from '../lib/ytmusic.js';
 import { logger } from '../lib/logger.js';
 
@@ -15,6 +16,8 @@ class DownloadService {
     this.initPromise = this.init();
     /** @type {Map<string, import('child_process').ChildProcess>} */
     this._activeProcs = new Map(); // downloadKey → yt-dlp process
+    /** @type {Map<string, ReadableStream<Uint8Array>>} */
+    this._activeStreams = new Map(); // downloadKey → Innertube stream
   }
 
   async init() {
@@ -312,15 +315,191 @@ class DownloadService {
     });
   }
 
-  /** Kill the yt-dlp process for the given download key, if running. */
+  /** Kill the active download for the given key (yt-dlp proc or Innertube stream). */
   killDownload(downloadKey) {
+    let killed = false;
     const proc = this._activeProcs.get(downloadKey);
     if (proc) {
       proc.kill('SIGTERM');
       this._activeProcs.delete(downloadKey);
-      return true;
+      killed = true;
     }
-    return false;
+    const stream = this._activeStreams.get(downloadKey);
+    if (stream) {
+      try { stream.cancel?.(); } catch { /* noop */ }
+      this._activeStreams.delete(downloadKey);
+      killed = true;
+    }
+    return killed;
+  }
+
+  // ── Innertube download path ──────────────────────────────────────────────────
+  // yt-dlp is fundamentally blocked on datacenter IPs (Render). Use youtubei.js
+  // to call YouTube's InnerTube API directly — same auth path the Android/iOS
+  // apps use. Returns raw streams; ffmpeg handles MP3/FLAC conversion after.
+
+  _mapToInnertubeOptions(format) {
+    switch (format) {
+      case 'audioonly':
+      case 'audioonly_aac':
+      case 'audioonly_m4a':
+      case 'audioonly_mp3':
+      case 'audioonly_flac':
+      case 'audioonly_wav':
+        return { type: 'audio', quality: 'best', format: 'mp4' }; // → m4a
+      case 'audioonly_opus':
+        return { type: 'audio', quality: 'best', format: 'webm' };
+      case 'audioandvideo':
+        return { type: 'video+audio', quality: 'best', format: 'mp4' };
+      case 'videoonly':
+        return { type: 'video', quality: 'best', format: 'mp4' };
+      default:
+        return { type: 'audio', quality: 'best', format: 'mp4' };
+    }
+  }
+
+  _audioConversionTarget(format) {
+    if (format === 'audioonly_mp3') return 'mp3';
+    if (format === 'audioonly_flac') return 'flac';
+    if (format === 'audioonly_wav') return 'wav';
+    return null;
+  }
+
+  _tempExtForFormat(format) {
+    if (format === 'audioonly_opus') return 'webm';
+    if (format === 'audioandvideo' || format === 'videoonly') return 'mp4';
+    return 'm4a'; // all audio variants get demuxed from mp4 container
+  }
+
+  async _convertWithFfmpeg(inputFile, outputFile, targetFormat) {
+    const args = ['-y', '-i', inputFile];
+    if (targetFormat === 'mp3') args.push('-vn', '-c:a', 'libmp3lame', '-q:a', '0');
+    else if (targetFormat === 'flac') args.push('-vn', '-c:a', 'flac');
+    else if (targetFormat === 'wav') args.push('-vn', '-c:a', 'pcm_s16le');
+    args.push(outputFile);
+    await this._runCmd('ffmpeg', args);
+    return outputFile;
+  }
+
+  async _createAuthedInnertube() {
+    const cookieStr = await this._readCookieString();
+    const createOpts = {
+      generate_session_locally: true,
+      retrieve_player: true,
+    };
+    if (cookieStr) createOpts.cookie = cookieStr;
+    try {
+      return await Innertube.create(createOpts);
+    } catch {
+      return getInnertube();
+    }
+  }
+
+  // Download a video via Innertube. Tries multiple clients to bypass bot
+  // detection on datacenter IPs. Streams to disk with progress events.
+  async _downloadViaInnertube(videoId, options = {}) {
+    const { format = 'audioonly', onProgress, downloadKey } = options;
+    const yt = await this._createAuthedInnertube();
+    const dlOpts = this._mapToInnertubeOptions(format);
+
+    // Get info — try clients that work on datacenter IPs first
+    let info;
+    let lastErr;
+    for (const client of ['ANDROID', 'IOS', 'WEB']) {
+      try {
+        info = await yt.getInfo(videoId, { client });
+        if (info?.streaming_data) {
+          logger.info({ videoId, client }, 'Innertube info OK for download');
+          break;
+        }
+      } catch (err) {
+        lastErr = err;
+        logger.warn({ videoId, client, err: err.message }, 'Innertube getInfo failed');
+      }
+    }
+    if (!info?.streaming_data) {
+      throw new Error(`Innertube failed to fetch streaming data: ${lastErr?.message ?? 'no streaming data'}`);
+    }
+
+    // Best-effort content length for progress
+    let contentLength = 0;
+    try {
+      const fmt = info.chooseFormat({ ...dlOpts });
+      contentLength = Number(fmt?.content_length ?? 0);
+    } catch (err) {
+      logger.warn({ err: err.message }, 'chooseFormat failed, progress will be size-less');
+    }
+
+    const title = this.sanitizeFilename(info.basic_info?.title ?? videoId);
+    const timestamp = Date.now();
+    const tempExt = this._tempExtForFormat(format);
+    const tempFile = path.join(this.downloadsDir, `${title}_${timestamp}.${tempExt}`);
+
+    const stream = await info.download(dlOpts);
+    if (downloadKey) this._activeStreams.set(downloadKey, stream);
+
+    const fileStream = createWriteStream(tempFile);
+    const sizeStr = contentLength > 0 ? `${(contentLength / 1048576).toFixed(2)}MB` : 'unknown';
+    onProgress?.({ percent: 0, speed: 'unknown', size: sizeStr, eta: 'unknown' });
+
+    let downloaded = 0;
+    let lastEmit = 0;
+    const startTs = Date.now();
+
+    try {
+      for await (const chunk of Utils.streamToIterable(stream)) {
+        if (!fileStream.write(chunk)) {
+          await new Promise((resolve) => fileStream.once('drain', resolve));
+        }
+        downloaded += chunk.length;
+
+        const now = Date.now();
+        if (now - lastEmit > 250) {
+          lastEmit = now;
+          const elapsed = (now - startTs) / 1000;
+          const speed = elapsed > 0 ? `${(downloaded / elapsed / 1048576).toFixed(2)}MB/s` : 'unknown';
+          const percent = contentLength > 0 ? Math.min(99, (downloaded / contentLength) * 100) : 0;
+          onProgress?.({ percent, size: sizeStr, speed, eta: 'unknown' });
+        }
+      }
+      fileStream.end();
+      await new Promise((resolve, reject) => {
+        fileStream.on('finish', resolve);
+        fileStream.on('error', reject);
+      });
+    } catch (err) {
+      fileStream.destroy();
+      await fs.unlink(tempFile).catch(() => {});
+      throw err;
+    } finally {
+      if (downloadKey) this._activeStreams.delete(downloadKey);
+    }
+
+    // Optional ffmpeg conversion (mp3/flac/wav)
+    const conversionTarget = this._audioConversionTarget(format);
+    let finalFile = tempFile;
+    if (conversionTarget) {
+      if (!this.ffmpegAvailable) {
+        logger.warn({ format }, 'ffmpeg unavailable, skipping conversion — returning raw m4a');
+      } else {
+        const convertedFile = path.join(this.downloadsDir, `${title}_${timestamp}.${conversionTarget}`);
+        try {
+          await this._convertWithFfmpeg(tempFile, convertedFile, conversionTarget);
+          await fs.unlink(tempFile).catch(() => {});
+          finalFile = convertedFile;
+        } catch (err) {
+          logger.error({ err: err.message }, 'ffmpeg conversion failed, returning raw file');
+        }
+      }
+    }
+
+    onProgress?.({ percent: 100, size: sizeStr, speed: 'done', eta: '0' });
+
+    return {
+      filePath: finalFile,
+      filename: path.basename(finalFile),
+      info,
+    };
   }
 
   // Translate our format/quality options to yt-dlp CLI format strings + extra args
@@ -383,70 +562,54 @@ class DownloadService {
     const {
       format = 'audioonly',
       quality = 'highest',
-      formatId,
       onProgress,
       downloadKey,
     } = options;
 
-    const videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
-
     try {
-      const info = await this._getInfo(videoUrl);
-      const title = this.sanitizeFilename(info.title);
-      const uploader = info.uploader || 'Unknown';
-      const timestamp = Date.now();
-      const outputTemplate = path.join(
-        this.downloadsDir,
-        `${title}_${timestamp}.%(ext)s`
-      );
+      const { filePath, filename, info } = await this._downloadViaInnertube(videoId, {
+        format,
+        onProgress,
+        downloadKey,
+      });
 
-      const { formatStr, extraArgs } = this._buildCliFormat(format, quality, formatId);
-      const args = ['-f', formatStr, '-o', outputTemplate, ...extraArgs];
-
-      onProgress?.({ percent: 0, speed: 'unknown', size: 'unknown', eta: 'unknown' });
-      await this._download(videoUrl, args, onProgress, downloadKey);
-      onProgress?.({ percent: 100, speed: 'unknown', size: 'unknown', eta: '0' });
-
-      // Find the downloaded file by title + timestamp
-      const files = await fs.readdir(this.downloadsDir);
-      const downloadedFile = files.find(
-        (f) => f.includes(title) && f.includes(timestamp.toString())
-      );
-
-      if (!downloadedFile) {
-        const cutoff = Date.now() - 5 * 60 * 1000;
-        const recentFiles = (
-          await Promise.all(
-            files.map(async (f) => {
-              try {
-                const stats = await fs.stat(path.join(this.downloadsDir, f));
-                return stats.mtimeMs > cutoff ? f : null;
-              } catch {
-                return null;
-              }
-            })
-          )
-        ).filter(Boolean);
-
-        throw new Error(
-          recentFiles.length > 0
-            ? `Downloaded file not found. Recent files: ${recentFiles.join(', ')}`
-            : 'Downloaded file not found and no recent files in directory'
-        );
-      }
-
-      const filePath = path.join(this.downloadsDir, downloadedFile);
       const fileStats = await fs.stat(filePath);
-      const qualityInfo = this._getQualityInfoFromFormats(format, info.formats || []);
+      const title = info.basic_info?.title ?? 'Unknown';
+      const uploader = info.basic_info?.author ?? 'Unknown';
+      const duration = info.basic_info?.duration ?? 0;
+
+      // Build a yt-dlp-shaped format list from Innertube streaming_data so the
+      // existing quality-info helper keeps working unchanged.
+      const ytdlpFormats = [];
+      const sd = info.streaming_data;
+      if (sd) {
+        const all = [...(sd.formats ?? []), ...(sd.adaptive_formats ?? [])];
+        for (const f of all) {
+          const mime = f.mime_type ?? '';
+          const isAudio = mime.startsWith('audio/');
+          ytdlpFormats.push({
+            format_id: String(f.itag),
+            acodec: isAudio ? 'aac' : 'none',
+            vcodec: isAudio ? 'none' : 'h264',
+            abr: isAudio ? Math.round((f.bitrate ?? 0) / 1000) : 0,
+            vbr: isAudio ? 0 : Math.round((f.bitrate ?? 0) / 1000),
+            asr: f.audio_sample_rate ? Number(f.audio_sample_rate) : 0,
+            height: f.height ?? null,
+            width: f.width ?? null,
+            fps: f.fps ?? null,
+          });
+        }
+      }
+      const qualityInfo = this._getQualityInfoFromFormats(format, ytdlpFormats);
 
       return {
         success: true,
         videoId,
-        title: info.title,
+        title,
         uploader,
-        filename: downloadedFile,
+        filename,
         filePath,
-        duration: info.duration || 0,
+        duration,
         format,
         quality: quality.toString(),
         size: fileStats.size,
@@ -803,7 +966,6 @@ class DownloadService {
     const albumDir = path.join(this.downloadsDir, sanitizedTitle);
     await fs.mkdir(albumDir, { recursive: true });
 
-    const { formatStr, extraArgs } = this._buildCliFormat(format, quality, null);
     const results = [];
     const failed = [];
 
@@ -826,44 +988,42 @@ class DownloadService {
       });
 
       try {
-        const videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
-        const timestamp = Date.now();
-        const outputTemplate = path.join(
-          albumDir,
-          `${paddedPos}. ${this.sanitizeFilename(songTitle)}_${timestamp}.%(ext)s`
+        const songKey = downloadKey ? `${downloadKey}_song${i}` : undefined;
+        const { filePath: tmpPath, filename: tmpName } = await this._downloadViaInnertube(
+          videoId,
+          {
+            format,
+            downloadKey: songKey,
+            onProgress: (progress) => {
+              const percent = Math.max(0, Math.min(100, Number(progress?.percent ?? 0)));
+              onProgress?.({
+                currentSong: position,
+                totalSongs: songs.length,
+                currentSongTitle: songTitle,
+                songProgress: percent,
+                overallProgress: Math.round(
+                  ((i + percent / 100) / songs.length) * 100
+                ),
+                albumTitle,
+                albumId,
+                type: 'album',
+              });
+            },
+          }
         );
 
-        const args = ['-f', formatStr, '-o', outputTemplate, ...extraArgs];
-
-        const songKey = downloadKey ? `${downloadKey}_song${i}` : undefined;
-        await this._download(videoUrl, args, (progress) => {
-          const percent = Math.max(0, Math.min(100, Number(progress?.percent ?? 0)));
-          onProgress?.({
-            currentSong: position,
-            totalSongs: songs.length,
-            currentSongTitle: songTitle,
-            songProgress: percent,
-            overallProgress: Math.round(
-              ((i + percent / 100) / songs.length) * 100
-            ),
-            albumTitle,
-            albumId,
-            type: 'album',
-          });
-        }, songKey);
-
-        const files = await fs.readdir(albumDir);
-        const downloadedFile = files.find((f) => f.includes(timestamp.toString()));
-        const filePath = downloadedFile
-          ? path.join(albumDir, downloadedFile)
-          : null;
-        const fileSize = filePath ? (await fs.stat(filePath)).size : 0;
+        // Move file into the album directory with the position prefix
+        const ext = path.extname(tmpName);
+        const finalName = `${paddedPos}. ${this.sanitizeFilename(songTitle)}${ext}`;
+        const finalPath = path.join(albumDir, finalName);
+        await fs.rename(tmpPath, finalPath);
+        const fileSize = (await fs.stat(finalPath)).size;
 
         results.push({
           success: true,
           videoId,
           title: songTitle,
-          filename: downloadedFile ?? `${paddedPos}. ${songTitle}`,
+          filename: finalName,
           duration: song.duration?.seconds ?? 0,
           format: this.getFormatName({ filter: format }),
           quality: quality.toString(),
