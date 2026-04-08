@@ -18,6 +18,8 @@ class DownloadService {
     this._activeProcs = new Map(); // downloadKey → yt-dlp process
     /** @type {Map<string, ReadableStream<Uint8Array>>} */
     this._activeStreams = new Map(); // downloadKey → Innertube stream
+    /** @type {Promise<import('youtubei.js').Innertube> | null} */
+    this._authedYt = null; // cached authed Innertube (cookies + player)
   }
 
   async init() {
@@ -147,21 +149,9 @@ class DownloadService {
   }
 
   async _getInfoViaInnertube(videoId) {
-    // Create Innertube instance with cookies for authenticated access.
-    // Cookies help bypass bot detection on datacenter IPs.
-    const cookieStr = await this._readCookieString();
-    const createOpts = {
-      generate_session_locally: true,
-      retrieve_player: true,
-    };
-    if (cookieStr) createOpts.cookie = cookieStr;
-
-    let yt;
-    try {
-      yt = await Innertube.create(createOpts);
-    } catch {
-      yt = await getInnertube(); // fallback to shared instance
-    }
+    // Reuse the cached authed Innertube — creating a new one on every request
+    // takes ~15s (fetches iframe_api, player JS, runs JsAnalyzer).
+    const yt = await this._createAuthedInnertube();
 
     // Try multiple clients — WEB gets blocked on datacenter IPs, ANDROID/IOS
     // use different auth and often bypass bot detection.
@@ -381,26 +371,97 @@ class DownloadService {
     return outputFile;
   }
 
-  async _createAuthedInnertube() {
-    const cookieStr = await this._readCookieString();
-    const createOpts = {
-      generate_session_locally: true,
-      retrieve_player: true,
-    };
-    if (cookieStr) createOpts.cookie = cookieStr;
-    try {
-      return await Innertube.create(createOpts);
-    } catch {
-      return getInnertube();
+  // Cached authed Innertube. Creating a new one is EXPENSIVE (~15s): fetches
+  // /iframe_api, the full player JS, and runs JsAnalyzer on it. We do it once
+  // and reuse it. Cache misses fall back to the shared singleton.
+  _createAuthedInnertube() {
+    if (this._authedYt) return this._authedYt;
+    this._authedYt = (async () => {
+      const cookieStr = await this._readCookieString();
+      const createOpts = {
+        generate_session_locally: true,
+        retrieve_player: true,
+      };
+      if (cookieStr) createOpts.cookie = cookieStr;
+      try {
+        return await Innertube.create(createOpts);
+      } catch (err) {
+        logger.warn({ err: err.message }, 'Authed Innertube create failed, using shared singleton');
+        this._authedYt = null;
+        return getInnertube();
+      }
+    })();
+    return this._authedYt;
+  }
+
+  // Parse the formatId from the frontend. Examples: "140" → single itag,
+  // "399+140" → video+audio pair (DASH), "bestaudio" / "best" → no itag.
+  _parseFormatId(formatId) {
+    if (!formatId || formatId === 'best' || formatId === 'bestaudio' || formatId === 'converted') {
+      return { kind: 'generic' };
     }
+    if (formatId.includes('+')) {
+      const [v, a] = formatId.split('+').map((s) => Number(s.trim()));
+      if (Number.isFinite(v) && Number.isFinite(a)) return { kind: 'dash', videoItag: v, audioItag: a };
+    }
+    const itag = Number(formatId);
+    if (Number.isFinite(itag)) return { kind: 'single', itag };
+    return { kind: 'generic' };
+  }
+
+  // Stream an Innertube ReadableStream to a file with progress events.
+  async _streamToFile(stream, filePath, { contentLength = 0, onProgress, downloadKey } = {}) {
+    if (downloadKey) this._activeStreams.set(downloadKey, stream);
+    const fileStream = createWriteStream(filePath);
+    const sizeStr = contentLength > 0 ? `${(contentLength / 1048576).toFixed(2)}MB` : 'unknown';
+    let downloaded = 0;
+    let lastEmit = 0;
+    const startTs = Date.now();
+    try {
+      for await (const chunk of Utils.streamToIterable(stream)) {
+        if (!fileStream.write(chunk)) {
+          await new Promise((resolve) => fileStream.once('drain', resolve));
+        }
+        downloaded += chunk.length;
+        const now = Date.now();
+        if (now - lastEmit > 250) {
+          lastEmit = now;
+          const elapsed = (now - startTs) / 1000;
+          const speed = elapsed > 0 ? `${(downloaded / elapsed / 1048576).toFixed(2)}MB/s` : 'unknown';
+          const percent = contentLength > 0 ? Math.min(99, (downloaded / contentLength) * 100) : 0;
+          onProgress?.({ percent, size: sizeStr, speed, eta: 'unknown' });
+        }
+      }
+      fileStream.end();
+      await new Promise((resolve, reject) => {
+        fileStream.on('finish', resolve);
+        fileStream.on('error', reject);
+      });
+    } catch (err) {
+      fileStream.destroy();
+      await fs.unlink(filePath).catch(() => {});
+      throw err;
+    } finally {
+      if (downloadKey) this._activeStreams.delete(downloadKey);
+    }
+  }
+
+  // Merge a video-only and an audio-only file into a single mp4 using ffmpeg.
+  async _ffmpegMerge(videoFile, audioFile, outputFile) {
+    await this._runCmd('ffmpeg', [
+      '-y', '-i', videoFile, '-i', audioFile,
+      '-c:v', 'copy', '-c:a', 'copy',
+      '-movflags', '+faststart',
+      outputFile,
+    ]);
+    return outputFile;
   }
 
   // Download a video via Innertube. Tries multiple clients to bypass bot
   // detection on datacenter IPs. Streams to disk with progress events.
   async _downloadViaInnertube(videoId, options = {}) {
-    const { format = 'audioonly', onProgress, downloadKey } = options;
+    const { format = 'audioonly', formatId, onProgress, downloadKey } = options;
     const yt = await this._createAuthedInnertube();
-    const dlOpts = this._mapToInnertubeOptions(format);
 
     // Get info — try clients that work on datacenter IPs first.
     // Order matters: TV_EMBEDDED / MWEB / WEB_EMBEDDED return UNCIPHERED URLs
@@ -425,7 +486,65 @@ class DownloadService {
       throw new Error(`Innertube failed to fetch streaming data: ${lastErr?.message ?? 'no streaming data'}`);
     }
 
-    // Best-effort content length for progress
+    const title = this.sanitizeFilename(info.basic_info?.title ?? videoId);
+    const timestamp = Date.now();
+    const parsed = this._parseFormatId(formatId);
+
+    // ─── DASH path: user chose "videoItag+audioItag" from the dialog ─────────
+    // Download video-only and audio-only separately, then mux with ffmpeg.
+    // This is the ONLY way to get > 360p for combined downloads on YouTube
+    // since muxed formats above 360p are rare/deprecated.
+    if (parsed.kind === 'dash') {
+      if (!this.ffmpegAvailable) {
+        throw new Error('ffmpeg is required to merge DASH video+audio streams');
+      }
+
+      const videoFmt = info.chooseFormat({ itag: parsed.videoItag });
+      const audioFmt = info.chooseFormat({ itag: parsed.audioItag });
+      const videoLen = Number(videoFmt?.content_length ?? 0);
+      const audioLen = Number(audioFmt?.content_length ?? 0);
+      const totalLen = videoLen + audioLen;
+
+      const videoTmp = path.join(this.downloadsDir, `${title}_${timestamp}.v.mp4`);
+      const audioTmp = path.join(this.downloadsDir, `${title}_${timestamp}.a.m4a`);
+      const outputFile = path.join(this.downloadsDir, `${title}_${timestamp}.mp4`);
+
+      onProgress?.({ percent: 0, size: `${(totalLen / 1048576).toFixed(2)}MB`, speed: 'unknown', eta: 'unknown' });
+
+      // Download video stream (0–70% of progress bar)
+      const videoStream = await info.download({ type: 'video', quality: 'best', format: 'mp4', itag: parsed.videoItag });
+      await this._streamToFile(videoStream, videoTmp, {
+        contentLength: videoLen,
+        downloadKey,
+        onProgress: (p) => onProgress?.({ ...p, percent: (p.percent ?? 0) * 0.7 }),
+      });
+
+      // Download audio stream (70–95%)
+      const audioStream = await info.download({ type: 'audio', quality: 'best', format: 'mp4', itag: parsed.audioItag });
+      await this._streamToFile(audioStream, audioTmp, {
+        contentLength: audioLen,
+        downloadKey,
+        onProgress: (p) => onProgress?.({ ...p, percent: 70 + (p.percent ?? 0) * 0.25 }),
+      });
+
+      // Mux (95–100%)
+      onProgress?.({ percent: 96, size: `${(totalLen / 1048576).toFixed(2)}MB`, speed: 'muxing', eta: 'unknown' });
+      await this._ffmpegMerge(videoTmp, audioTmp, outputFile);
+      await Promise.all([
+        fs.unlink(videoTmp).catch(() => {}),
+        fs.unlink(audioTmp).catch(() => {}),
+      ]);
+
+      return { filePath: outputFile, filename: path.basename(outputFile), info };
+    }
+
+    // ─── Single-stream path ──────────────────────────────────────────────────
+    // User chose a specific itag (e.g. 140 for AAC audio) or no formatId at
+    // all. We respect the itag if given, otherwise fall back to generic
+    // type/quality selection from format name.
+    const dlOpts = this._mapToInnertubeOptions(format);
+    if (parsed.kind === 'single') dlOpts.itag = parsed.itag;
+
     let contentLength = 0;
     try {
       const fmt = info.chooseFormat({ ...dlOpts });
@@ -434,50 +553,10 @@ class DownloadService {
       logger.warn({ err: err.message }, 'chooseFormat failed, progress will be size-less');
     }
 
-    const title = this.sanitizeFilename(info.basic_info?.title ?? videoId);
-    const timestamp = Date.now();
     const tempExt = this._tempExtForFormat(format);
     const tempFile = path.join(this.downloadsDir, `${title}_${timestamp}.${tempExt}`);
-
     const stream = await info.download(dlOpts);
-    if (downloadKey) this._activeStreams.set(downloadKey, stream);
-
-    const fileStream = createWriteStream(tempFile);
-    const sizeStr = contentLength > 0 ? `${(contentLength / 1048576).toFixed(2)}MB` : 'unknown';
-    onProgress?.({ percent: 0, speed: 'unknown', size: sizeStr, eta: 'unknown' });
-
-    let downloaded = 0;
-    let lastEmit = 0;
-    const startTs = Date.now();
-
-    try {
-      for await (const chunk of Utils.streamToIterable(stream)) {
-        if (!fileStream.write(chunk)) {
-          await new Promise((resolve) => fileStream.once('drain', resolve));
-        }
-        downloaded += chunk.length;
-
-        const now = Date.now();
-        if (now - lastEmit > 250) {
-          lastEmit = now;
-          const elapsed = (now - startTs) / 1000;
-          const speed = elapsed > 0 ? `${(downloaded / elapsed / 1048576).toFixed(2)}MB/s` : 'unknown';
-          const percent = contentLength > 0 ? Math.min(99, (downloaded / contentLength) * 100) : 0;
-          onProgress?.({ percent, size: sizeStr, speed, eta: 'unknown' });
-        }
-      }
-      fileStream.end();
-      await new Promise((resolve, reject) => {
-        fileStream.on('finish', resolve);
-        fileStream.on('error', reject);
-      });
-    } catch (err) {
-      fileStream.destroy();
-      await fs.unlink(tempFile).catch(() => {});
-      throw err;
-    } finally {
-      if (downloadKey) this._activeStreams.delete(downloadKey);
-    }
+    await this._streamToFile(stream, tempFile, { contentLength, onProgress, downloadKey });
 
     // Optional ffmpeg conversion (mp3/flac/wav)
     const conversionTarget = this._audioConversionTarget(format);
@@ -497,7 +576,8 @@ class DownloadService {
       }
     }
 
-    onProgress?.({ percent: 100, size: sizeStr, speed: 'done', eta: '0' });
+    const finalSize = contentLength > 0 ? `${(contentLength / 1048576).toFixed(2)}MB` : 'unknown';
+    onProgress?.({ percent: 100, size: finalSize, speed: 'done', eta: '0' });
 
     return {
       filePath: finalFile,
