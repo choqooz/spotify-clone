@@ -148,13 +148,15 @@ class DownloadService {
     }
   }
 
-  // Client priority for info/download. WEB returns the richest set of itags
-  // (AV1 up to 4K, high-bitrate audio), so we put it first — the eval shim
-  // in lib/ytmusic.js handles decipher. Listing and download MUST use the
-  // same order; otherwise the user picks an itag from one client's set that
-  // doesn't exist in the download client's set, and chooseFormat silently
-  // falls back to the 360p default.
-  static INNERTUBE_CLIENT_ORDER = ['WEB', 'MWEB', 'WEB_EMBEDDED', 'TV_EMBEDDED', 'ANDROID', 'IOS'];
+  // Client priority for info/download. MWEB goes FIRST because on Render's
+  // datacenter IP it's the only client whose signed stream URLs actually
+  // fetch successfully — WEB lists AV1 up to 4K but its signed URLs require
+  // a PO token and return 403 from datacenter IPs. MWEB provides H264 up
+  // to 1080p + AAC, which covers the sensible quality range.
+  // Listing and download MUST use the same order; otherwise the user picks
+  // an itag from one client's set that doesn't exist in the download
+  // client's set and chooseFormat silently falls back to the 360p default.
+  static INNERTUBE_CLIENT_ORDER = ['MWEB', 'WEB_EMBEDDED', 'TV_EMBEDDED', 'WEB', 'ANDROID', 'IOS'];
 
   async _getInfoViaInnertube(videoId) {
     // Reuse the cached authed Innertube — creating a new one on every request
@@ -671,6 +673,7 @@ class DownloadService {
     const {
       format = 'audioonly',
       quality = 'highest',
+      formatId,
       onProgress,
       downloadKey,
     } = options;
@@ -678,6 +681,7 @@ class DownloadService {
     try {
       const { filePath, filename, info } = await this._downloadViaInnertube(videoId, {
         format,
+        formatId,
         onProgress,
         downloadKey,
       });
