@@ -402,10 +402,14 @@ class DownloadService {
     const yt = await this._createAuthedInnertube();
     const dlOpts = this._mapToInnertubeOptions(format);
 
-    // Get info — try clients that work on datacenter IPs first
+    // Get info — try clients that work on datacenter IPs first.
+    // Order matters: TV_EMBEDDED / MWEB / WEB_EMBEDDED return UNCIPHERED URLs
+    // (no JS decipher step required), so they're cheapest. ANDROID/IOS often
+    // return 400 on Render's IP. WEB is the last resort and requires the vm
+    // eval shim patched in lib/ytmusic.js.
     let info;
     let lastErr;
-    for (const client of ['ANDROID', 'IOS', 'WEB']) {
+    for (const client of ['TV_EMBEDDED', 'MWEB', 'WEB_EMBEDDED', 'ANDROID', 'IOS', 'WEB']) {
       try {
         info = await yt.getInfo(videoId, { client });
         if (info?.streaming_data) {

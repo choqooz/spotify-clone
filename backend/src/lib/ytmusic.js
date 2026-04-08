@@ -1,5 +1,23 @@
-import { Innertube } from 'youtubei.js';
+import vm from 'node:vm';
+import { Innertube, Platform } from 'youtubei.js';
 import { logger } from './logger.js';
+
+// youtubei.js v17 ships with a no-op JS evaluator on the default platform shim,
+// which means downloads from the WEB client fail with "To decipher URLs, you
+// must provide your own JavaScript evaluator". Patch the shim to use Node's
+// built-in vm module so player signatures can be deciphered.
+try {
+  const shim = Platform.shim;
+  if (shim) {
+    shim.eval = (code, env = {}) => {
+      const ctx = vm.createContext({ ...env });
+      return vm.runInContext(code, ctx, { timeout: 5000 });
+    };
+    logger.info('Patched youtubei.js Platform.shim.eval with Node vm');
+  }
+} catch (err) {
+  logger.warn({ err: err.message }, 'Failed to patch youtubei.js eval shim');
+}
 
 // Store the Promise (not the result) to avoid the race condition where two
 // concurrent callers both see _promise === null and create two instances.
