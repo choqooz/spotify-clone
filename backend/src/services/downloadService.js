@@ -148,16 +148,22 @@ class DownloadService {
     }
   }
 
+  // Client priority for info/download. WEB returns the richest set of itags
+  // (AV1 up to 4K, high-bitrate audio), so we put it first — the eval shim
+  // in lib/ytmusic.js handles decipher. Listing and download MUST use the
+  // same order; otherwise the user picks an itag from one client's set that
+  // doesn't exist in the download client's set, and chooseFormat silently
+  // falls back to the 360p default.
+  static INNERTUBE_CLIENT_ORDER = ['WEB', 'MWEB', 'WEB_EMBEDDED', 'TV_EMBEDDED', 'ANDROID', 'IOS'];
+
   async _getInfoViaInnertube(videoId) {
     // Reuse the cached authed Innertube — creating a new one on every request
     // takes ~15s (fetches iframe_api, player JS, runs JsAnalyzer).
     const yt = await this._createAuthedInnertube();
 
-    // Try multiple clients — WEB gets blocked on datacenter IPs, ANDROID/IOS
-    // use different auth and often bypass bot detection.
     let info;
     let streamingData;
-    for (const client of ['ANDROID', 'IOS', 'WEB']) {
+    for (const client of DownloadService.INNERTUBE_CLIENT_ORDER) {
       try {
         info = await yt.getInfo(videoId, { client });
         streamingData = info.streaming_data;
@@ -463,20 +469,39 @@ class DownloadService {
     const { format = 'audioonly', formatId, onProgress, downloadKey } = options;
     const yt = await this._createAuthedInnertube();
 
-    // Get info — try clients that work on datacenter IPs first.
-    // Order matters: TV_EMBEDDED / MWEB / WEB_EMBEDDED return UNCIPHERED URLs
-    // (no JS decipher step required), so they're cheapest. ANDROID/IOS often
-    // return 400 on Render's IP. WEB is the last resort and requires the vm
-    // eval shim patched in lib/ytmusic.js.
+    // Use the SAME client priority as format listing. If the user picked a
+    // specific itag, we iterate until we find a client whose streaming_data
+    // actually contains that itag — otherwise chooseFormat falls back to the
+    // 360p default and the user gets a low-quality download despite picking
+    // high quality in the dialog.
+    const wantedItag = formatId ? this._parseFormatId(formatId) : { kind: 'generic' };
+    const requiredItags = wantedItag.kind === 'dash'
+      ? [wantedItag.videoItag, wantedItag.audioItag]
+      : wantedItag.kind === 'single'
+        ? [wantedItag.itag]
+        : [];
+
+    const hasAllItags = (streamingData) => {
+      if (requiredItags.length === 0) return true;
+      const all = [...(streamingData.formats ?? []), ...(streamingData.adaptive_formats ?? [])];
+      const available = new Set(all.map((f) => f.itag));
+      return requiredItags.every((t) => available.has(t));
+    };
+
     let info;
     let lastErr;
-    for (const client of ['TV_EMBEDDED', 'MWEB', 'WEB_EMBEDDED', 'ANDROID', 'IOS', 'WEB']) {
+    for (const client of DownloadService.INNERTUBE_CLIENT_ORDER) {
       try {
-        info = await yt.getInfo(videoId, { client });
-        if (info?.streaming_data) {
-          logger.info({ videoId, client }, 'Innertube info OK for download');
-          break;
+        const candidate = await yt.getInfo(videoId, { client });
+        if (!candidate?.streaming_data) continue;
+        if (!hasAllItags(candidate.streaming_data)) {
+          logger.info({ videoId, client, requiredItags }, 'Client OK but missing requested itags, trying next');
+          info = info ?? candidate; // remember in case no client has the itag
+          continue;
         }
+        info = candidate;
+        logger.info({ videoId, client, requiredItags }, 'Innertube info OK for download');
+        break;
       } catch (err) {
         lastErr = err;
         logger.warn({ videoId, client, err: err.message }, 'Innertube getInfo failed');
