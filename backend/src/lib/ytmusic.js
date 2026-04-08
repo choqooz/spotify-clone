@@ -9,9 +9,16 @@ import { logger } from './logger.js';
 try {
   const shim = Platform.shim;
   if (shim) {
-    shim.eval = (code, env = {}) => {
-      const ctx = vm.createContext({ ...env });
-      return vm.runInContext(code, ctx, { timeout: 5000 });
+    // youtubei.js v17 calls eval(data, eval_args) where `data` is an object
+    // with an `output` property containing the player JS to execute. The
+    // generated script ends with a top-level `return process(...)` from
+    // getNsigProcessorFn, so we wrap it in an IIFE to make `return` valid.
+    shim.eval = (data, _env) => {
+      const source = typeof data === 'string' ? data : (data?.output ?? '');
+      if (!source) throw new Error('eval shim: empty player script');
+      const wrapped = `(function () {\n${source}\n})()`;
+      const ctx = vm.createContext({});
+      return vm.runInContext(wrapped, ctx, { timeout: 5000 });
     };
     logger.info('Patched youtubei.js Platform.shim.eval with Node vm');
   }
