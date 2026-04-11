@@ -31,6 +31,11 @@ interface PlayerStore {
   repeatMode: 'none' | 'one' | 'all';
   shuffledIndices: number[];
 
+  // Command fields — AudioPlayer watches these and executes imperatively
+  seekCommand: { time: number; id: number } | null;
+  volumeCommand: { volume: number; id: number } | null;
+  restartCommand: number | null; // increments each time a restart is requested
+
   initializeQueue: (songs: Song[]) => void;
   playAlbum: (songs: Song[], startIndex?: number) => void;
   setCurrentSong: (song: Song | null) => void;
@@ -44,6 +49,14 @@ interface PlayerStore {
   toggleMute: () => void;
   toggleShuffle: () => void;
   cycleRepeatMode: () => void;
+
+  // Command actions
+  requestSeek: (time: number) => void;
+  requestVolume: (volume: number) => void;
+  requestRestart: () => void;
+  clearSeekCommand: () => void;
+  clearVolumeCommand: () => void;
+  clearRestartCommand: () => void;
 }
 
 export const usePlayerStore = create<PlayerStore>((set, get) => ({
@@ -59,6 +72,9 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
   isShuffled: false,
   repeatMode: 'none',
   shuffledIndices: [],
+  seekCommand: null,
+  volumeCommand: null,
+  restartCommand: null,
 
   initializeQueue: (songs: Song[]) => {
     const { currentSong } = get();
@@ -110,11 +126,7 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
       const currentSong = queue[currentIndex];
       if (currentSong) {
         emitActivity(`Playing ${currentSong.title} by ${currentSong.artist}`);
-        // Trigger a re-play by toggling isPlaying off then on, but the
-        // AudioPlayer listens to currentSong changes. Emit same song again
-        // via a temporary null trick isn't clean — instead we dispatch a
-        // custom event that AudioPlayer can use to seek to 0 and resume.
-        window.dispatchEvent(new CustomEvent('player-restart'));
+        get().requestRestart();
       }
       return;
     }
@@ -161,7 +173,7 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
 
     // repeat one → restart current
     if (repeatMode === 'one') {
-      window.dispatchEvent(new CustomEvent('player-restart'));
+      get().requestRestart();
       return;
     }
 
@@ -182,7 +194,7 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
         set({ currentSong: prevSong, currentIndex: prevIndex, isPlaying: true });
       } else {
         // already at start — stay on current
-        window.dispatchEvent(new CustomEvent('player-restart'));
+        get().requestRestart();
       }
       return;
     }
@@ -199,7 +211,7 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
       set({ currentSong: lastSong, currentIndex: queue.length - 1, isPlaying: true });
     } else if (queue.length > 0) {
       // at start with no repeat — restart current song
-      window.dispatchEvent(new CustomEvent('player-restart'));
+      get().requestRestart();
     } else {
       set({ isPlaying: false });
     }
@@ -210,48 +222,14 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
   setDuration: (duration) => set({ duration }),
 
   seekTo: (time) => {
-    const { currentSong } = get();
-
-    // For local audio files
-    if (currentSong && !currentSong.videoId) {
-      const audio = document.querySelector('audio') as HTMLAudioElement;
-      if (audio) {
-        audio.currentTime = time;
-      }
-    }
-
-    // For YouTube videos, dispatch a custom event that AudioPlayer can listen to
-    if (currentSong && currentSong.videoId) {
-      window.dispatchEvent(
-        new CustomEvent('youtube-seek', {
-          detail: { time },
-        })
-      );
-    }
+    // Update state — AudioPlayer owns the audio/YouTube refs and reacts via useEffect
+    get().requestSeek(time);
   },
 
   setVolume: (volume) => {
-    const { currentSong } = get();
-
-    // Update store first
+    // Update store — AudioPlayer owns the audio/YouTube refs and reacts via useEffect
     set({ volume, isMuted: volume === 0 });
-
-    // For local audio files
-    if (currentSong && !currentSong.videoId) {
-      const audio = document.querySelector('audio') as HTMLAudioElement;
-      if (audio) {
-        audio.volume = volume / 100;
-      }
-    }
-
-    // For YouTube videos, dispatch a custom event
-    if (currentSong && currentSong.videoId) {
-      window.dispatchEvent(
-        new CustomEvent('youtube-volume', {
-          detail: { volume },
-        })
-      );
-    }
+    get().requestVolume(volume);
   },
 
   toggleMute: () => {
@@ -296,4 +274,23 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
     };
     set({ repeatMode: next[repeatMode] });
   },
+
+  requestSeek: (time) => {
+    const prev = get().seekCommand;
+    set({ seekCommand: { time, id: prev ? prev.id + 1 : 1 } });
+  },
+
+  requestVolume: (volume) => {
+    const prev = get().volumeCommand;
+    set({ volumeCommand: { volume, id: prev ? prev.id + 1 : 1 } });
+  },
+
+  requestRestart: () => {
+    const prev = get().restartCommand;
+    set({ restartCommand: prev !== null ? prev + 1 : 1 });
+  },
+
+  clearSeekCommand: () => set({ seekCommand: null }),
+  clearVolumeCommand: () => set({ volumeCommand: null }),
+  clearRestartCommand: () => set({ restartCommand: null }),
 }));

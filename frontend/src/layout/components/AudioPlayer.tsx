@@ -30,6 +30,10 @@ export const AudioPlayer = () => {
     }))
   );
 
+  const seekCommand = usePlayerStore((s) => s.seekCommand);
+  const volumeCommand = usePlayerStore((s) => s.volumeCommand);
+  const restartCommand = usePlayerStore((s) => s.restartCommand);
+
   const isYouTubeSong = currentSong?.videoId && !currentSong?.audioUrl;
 
   // YouTube player options - optimized for local networks like chocolateey
@@ -275,47 +279,50 @@ export const AudioPlayer = () => {
     }
   };
 
-  // Listen for seek events (from lyrics panel and other components)
+  // React to seek commands from the store (replaces window custom events)
   useEffect(() => {
-    const handleSeekToTime = (event: CustomEvent<{ time: number }>) => {
-      const time = event.detail.time;
+    if (!seekCommand) return;
 
-      if (isYouTubeSong && youtubeRef.current) {
-        safeYouTubeCall(() => youtubeRef.current.seekTo(time, true));
-      } else if (audioRef.current) {
-        audioRef.current.currentTime = time;
-      }
-    };
+    if (isYouTubeSong && youtubeRef.current) {
+      safeYouTubeCall(() => youtubeRef.current.seekTo(seekCommand.time, true));
+    } else if (audioRef.current) {
+      audioRef.current.currentTime = seekCommand.time;
+    }
 
-    const handleYouTubeSeek = (event: CustomEvent<{ time: number }>) => {
-      const time = event.detail.time;
+    usePlayerStore.getState().clearSeekCommand();
+  }, [seekCommand, isYouTubeSong]);
 
-      if (youtubeRef.current && isYouTubeSong) {
-        safeYouTubeCall(() => youtubeRef.current.seekTo(time, true));
-      }
-    };
+  // React to volume commands from the store (replaces window custom events)
+  useEffect(() => {
+    if (!volumeCommand) return;
 
-    const handleYouTubeVolume = (event: CustomEvent<{ volume: number }>) => {
-      const volume = event.detail.volume;
+    if (isYouTubeSong && youtubeRef.current) {
+      safeYouTubeCall(() => youtubeRef.current.setVolume(volumeCommand.volume));
+    } else if (audioRef.current) {
+      audioRef.current.volume = volumeCommand.volume / 100;
+    }
 
-      if (youtubeRef.current && isYouTubeSong) {
-        safeYouTubeCall(() => youtubeRef.current.setVolume(volume));
-      }
-    };
+    usePlayerStore.getState().clearVolumeCommand();
+  }, [volumeCommand, isYouTubeSong]);
 
-    // Listen for general seek events (from lyrics).
-    // Cast to EventListener because window.addEventListener uses the base Event
-    // type for string event names; our handlers expect the narrower CustomEvent.
-    window.addEventListener('seekToTime', handleSeekToTime as EventListener);
-    window.addEventListener('youtube-seek', handleYouTubeSeek as EventListener);
-    window.addEventListener('youtube-volume', handleYouTubeVolume as EventListener);
+  // React to restart commands from the store (replaces window custom events)
+  useEffect(() => {
+    if (restartCommand === null) return;
 
-    return () => {
-      window.removeEventListener('seekToTime', handleSeekToTime as EventListener);
-      window.removeEventListener('youtube-seek', handleYouTubeSeek as EventListener);
-      window.removeEventListener('youtube-volume', handleYouTubeVolume as EventListener);
-    };
-  }, [isYouTubeSong]);
+    if (isYouTubeSong && youtubeRef.current) {
+      safeYouTubeCall(() => {
+        youtubeRef.current.seekTo(0, true);
+        youtubeRef.current.playVideo();
+      });
+    } else if (audioRef.current) {
+      audioRef.current.currentTime = 0;
+      audioRef.current.play().catch(() => {
+        setNeedsManualPlay(true);
+      });
+    }
+
+    usePlayerStore.getState().clearRestartCommand();
+  }, [restartCommand, isYouTubeSong]);
 
   return (
     <>

@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { axiosInstance } from '@/lib/axios';
 import { getApiError } from '@/lib/apiError';
+import { usePlayerStore } from './usePlayerStore';
 
 export interface LyricLine {
   time: number;
@@ -91,8 +92,8 @@ export const useLyricsStore = create<LyricsStore>((set, get) => ({
   hideLyrics: () => set({ isVisible: false }),
 
   seekToLyric: (time: number) => {
-    const event = new CustomEvent('seekToTime', { detail: { time } });
-    window.dispatchEvent(event);
+    // Cross-store call — use getState() (not the hook) per Zustand convention
+    usePlayerStore.getState().requestSeek(time);
   },
 
   setOffset: (offset: number) => {
