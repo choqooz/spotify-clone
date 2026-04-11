@@ -114,25 +114,34 @@ export const errorHandler = (err, req, res, next) => {
     error.status = 'error';
   }
 
-  // Handle WebSocket emissions for download errors
+  // Handle WebSocket emissions for download errors.
+  // Wrapped in try-catch — socket may be closed/invalid and must not crash the error handler.
   if (req.io) {
     const videoId = req.body?.videoId || req.params?.videoId;
     const albumId = req.body?.albumId || req.params?.albumId;
 
     if (videoId) {
-      req.io.emit(`download-error-${videoId}`, {
-        type: 'song',
-        error: error.message,
-        statusCode: error.statusCode,
-      });
+      try {
+        req.io.emit(`download-error-${videoId}`, {
+          type: 'song',
+          error: error.message,
+          statusCode: error.statusCode,
+        });
+      } catch (emitErr) {
+        logger.warn({ err: emitErr }, 'Failed to emit socket event');
+      }
     }
 
     if (albumId) {
-      req.io.emit(`album-error-${albumId}`, {
-        type: 'album',
-        error: error.message,
-        statusCode: error.statusCode,
-      });
+      try {
+        req.io.emit(`album-error-${albumId}`, {
+          type: 'album',
+          error: error.message,
+          statusCode: error.statusCode,
+        });
+      } catch (emitErr) {
+        logger.warn({ err: emitErr }, 'Failed to emit socket event');
+      }
     }
   }
 

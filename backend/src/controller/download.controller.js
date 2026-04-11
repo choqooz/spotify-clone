@@ -7,6 +7,19 @@ import {
   ValidationError,
   ConflictError,
 } from '../middleware/error.middleware.js';
+import { logger } from '../lib/logger.js';
+
+/**
+ * Safely emit a Socket.IO event. The socket may be closed/invalid by the time
+ * the download completes — swallow the error so it never crashes the handler.
+ */
+const safeEmit = (io, event, data) => {
+  try {
+    io.emit(event, data);
+  } catch (err) {
+    logger.warn({ err }, 'Failed to emit socket event');
+  }
+};
 
 const createDownloadKey = (type, id, format, quality) => {
   return `${type}_${id}_${format}_${quality}`;
@@ -51,7 +64,7 @@ export const downloadSong = asyncHandler(async (req, res) => {
       downloadKey,
       onProgress: (progress) => {
         if (req.io) {
-          req.io.emit(`download-progress-${videoId}`, {
+          safeEmit(req.io, `download-progress-${videoId}`, {
             type: 'song',
             ...progress,
           });
@@ -62,7 +75,7 @@ export const downloadSong = asyncHandler(async (req, res) => {
     downloadService.untrackDownload(downloadKey);
 
     if (req.io) {
-      req.io.emit(`download-complete-${videoId}`, {
+      safeEmit(req.io, `download-complete-${videoId}`, {
         type: 'song',
         success: true,
         ...result,
@@ -112,7 +125,7 @@ export const downloadAlbum = asyncHandler(async (req, res) => {
       downloadKey,
       onProgress: (progress) => {
         if (req.io) {
-          req.io.emit(`album-progress-${albumId}`, {
+          safeEmit(req.io, `album-progress-${albumId}`, {
             type: 'album',
             ...progress,
           });
@@ -123,7 +136,7 @@ export const downloadAlbum = asyncHandler(async (req, res) => {
     downloadService.untrackDownload(downloadKey);
 
     if (req.io) {
-      req.io.emit(`album-complete-${albumId}`, {
+      safeEmit(req.io, `album-complete-${albumId}`, {
         type: 'album',
         success: true,
         ...result,

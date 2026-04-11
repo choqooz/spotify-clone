@@ -7,6 +7,20 @@ import { getInnertube, getAuthedInnertube } from '../lib/ytmusic.js';
 import { logger } from '../lib/logger.js';
 import { VALID_FORMATS, isValidFormat } from '../lib/downloadFormats.js';
 
+// ── Download constants ────────────────────────────────────────────────────────
+
+/** Audio bitrate quality thresholds in kbps */
+const BITRATE_TIERS = { HIGH: 256, MEDIUM: 192, STANDARD: 128, LOW: 96, MINIMUM: 64 };
+
+/** Video resolution quality thresholds in pixels (height) */
+const RESOLUTION_TIERS = { UHD: 2160, QHD: 1440, FHD: 1080, HD: 720, SD: 480 };
+
+/** Reduction factor applied to source bitrate when estimating converted MP3 size */
+const MP3_SIZE_REDUCTION = 0.8;
+
+/** Multipliers for estimating output file size per codec relative to source */
+const CODEC_SIZE_MULTIPLIERS = { mp3: 1.2, flac: 4.0, aac: 1.0 };
+
 class DownloadService {
   constructor() {
     this.downloadsDir = path.join(process.cwd(), 'downloads');
@@ -19,6 +33,8 @@ class DownloadService {
     this._activeProcs = new Map(); // downloadKey → yt-dlp process
     /** @type {Map<string, ReadableStream<Uint8Array>>} */
     this._activeStreams = new Map(); // downloadKey → Innertube stream
+    /** @type {Map<string, AbortController>} */
+    this._activeControllers = new Map(); // downloadKey → AbortController for Innertube streams
     /**
      * Tracks in-flight downloads (metadata only — not the stream itself).
      * Moved here from download.controller.js so state lives in the service layer.
@@ -315,6 +331,13 @@ class DownloadService {
       this._activeStreams.delete(downloadKey);
       killed = true;
     }
+    // Abort any in-progress Innertube stream via AbortController
+    const controller = this._activeControllers.get(downloadKey);
+    if (controller) {
+      try { controller.abort(); } catch { /* noop */ }
+      this._activeControllers.delete(downloadKey);
+      killed = true;
+    }
     return killed;
   }
 
@@ -388,7 +411,9 @@ class DownloadService {
   }
 
   // Stream an Innertube ReadableStream to a file with progress events.
-  async _streamToFile(stream, filePath, { contentLength = 0, onProgress, downloadKey } = {}) {
+  // Accepts an optional AbortSignal; when aborted, closes the write stream
+  // and deletes the partial file before re-throwing the abort error.
+  async _streamToFile(stream, filePath, { contentLength = 0, onProgress, downloadKey, signal } = {}) {
     if (downloadKey) this._activeStreams.set(downloadKey, stream);
     const fileStream = createWriteStream(filePath);
     const sizeStr = contentLength > 0 ? `${(contentLength / 1048576).toFixed(2)}MB` : 'unknown';
@@ -397,6 +422,10 @@ class DownloadService {
     const startTs = Date.now();
     try {
       for await (const chunk of Utils.streamToIterable(stream)) {
+        // Respect cancellation between chunks
+        if (signal?.aborted) {
+          throw new DOMException('Download aborted by user', 'AbortError');
+        }
         if (!fileStream.write(chunk)) {
           await new Promise((resolve) => fileStream.once('drain', resolve));
         }
@@ -454,23 +483,34 @@ class DownloadService {
     const audioTmp = path.join(this.downloadsDir, `${title}_${timestamp}.a.m4a`);
     const outputFile = path.join(this.downloadsDir, `${title}_${timestamp}.mp4`);
 
+    // Create a single AbortController for the entire DASH download pair
+    const controller = new AbortController();
+    const { signal } = controller;
+    if (downloadKey) this._activeControllers.set(downloadKey, controller);
+
     onProgress?.({ percent: 0, size: `${(totalLen / 1048576).toFixed(2)}MB`, speed: 'unknown', eta: 'unknown' });
 
-    // Download video stream (0–70% of progress bar)
-    const videoStream = await info.download({ type: 'video', quality: 'best', format: 'mp4', itag: parsed.videoItag });
-    await this._streamToFile(videoStream, videoTmp, {
-      contentLength: videoLen,
-      downloadKey,
-      onProgress: (p) => onProgress?.({ ...p, percent: (p.percent ?? 0) * 0.7 }),
-    });
+    try {
+      // Download video stream (0–70% of progress bar)
+      const videoStream = await info.download({ type: 'video', quality: 'best', format: 'mp4', itag: parsed.videoItag });
+      await this._streamToFile(videoStream, videoTmp, {
+        contentLength: videoLen,
+        downloadKey,
+        signal,
+        onProgress: (p) => onProgress?.({ ...p, percent: (p.percent ?? 0) * 0.7 }),
+      });
 
-    // Download audio stream (70–95%)
-    const audioStream = await info.download({ type: 'audio', quality: 'best', format: 'mp4', itag: parsed.audioItag });
-    await this._streamToFile(audioStream, audioTmp, {
-      contentLength: audioLen,
-      downloadKey,
-      onProgress: (p) => onProgress?.({ ...p, percent: 70 + (p.percent ?? 0) * 0.25 }),
-    });
+      // Download audio stream (70–95%)
+      const audioStream = await info.download({ type: 'audio', quality: 'best', format: 'mp4', itag: parsed.audioItag });
+      await this._streamToFile(audioStream, audioTmp, {
+        contentLength: audioLen,
+        downloadKey,
+        signal,
+        onProgress: (p) => onProgress?.({ ...p, percent: 70 + (p.percent ?? 0) * 0.25 }),
+      });
+    } finally {
+      if (downloadKey) this._activeControllers.delete(downloadKey);
+    }
 
     // Mux (95–100%)
     onProgress?.({ percent: 96, size: `${(totalLen / 1048576).toFixed(2)}MB`, speed: 'muxing', eta: 'unknown' });
@@ -557,8 +597,18 @@ class DownloadService {
 
     const tempExt = this._tempExtForFormat(format);
     const tempFile = path.join(this.downloadsDir, `${title}_${timestamp}.${tempExt}`);
+
+    // Create AbortController for this single-stream download
+    const controller = new AbortController();
+    const { signal } = controller;
+    if (downloadKey) this._activeControllers.set(downloadKey, controller);
+
     const stream = await info.download(dlOpts);
-    await this._streamToFile(stream, tempFile, { contentLength, onProgress, downloadKey });
+    try {
+      await this._streamToFile(stream, tempFile, { contentLength, onProgress, downloadKey, signal });
+    } finally {
+      if (downloadKey) this._activeControllers.delete(downloadKey);
+    }
 
     // Optional ffmpeg conversion (mp3/flac/wav)
     const conversionTarget = this._audioConversionTarget(format);
@@ -746,10 +796,10 @@ class DownloadService {
         format: 'audioonly_mp3',
         quality: '0',
         formatId: 'converted',
-        label: `MP3 ~${Math.round(maxBitrate * 0.8)} kbps`,
+        label: `MP3 ~${Math.round(maxBitrate * MP3_SIZE_REDUCTION)} kbps`,
         description: 'Converted from best quality',
         codec: 'mp3',
-        bitrate: Math.round(maxBitrate * 0.8),
+        bitrate: Math.round(maxBitrate * MP3_SIZE_REDUCTION),
         sampleRate: 'variable',
         filesize: 0,
         filesizeMB: '~' + this.estimateConvertedSize(maxBitrate, 'mp3'),
@@ -1297,21 +1347,21 @@ class DownloadService {
   }
 
   getAudioQualityRating(bitrate) {
-    if (bitrate >= 256) return 'Excellent (256+ kbps)';
-    if (bitrate >= 192) return 'Very Good (192+ kbps)';
-    if (bitrate >= 128) return 'Good (128+ kbps)';
-    if (bitrate >= 96) return 'Standard (96+ kbps)';
-    if (bitrate >= 64) return 'Low (64+ kbps)';
-    return 'Very Low (<64 kbps)';
+    if (bitrate >= BITRATE_TIERS.HIGH) return `Excellent (${BITRATE_TIERS.HIGH}+ kbps)`;
+    if (bitrate >= BITRATE_TIERS.MEDIUM) return `Very Good (${BITRATE_TIERS.MEDIUM}+ kbps)`;
+    if (bitrate >= BITRATE_TIERS.STANDARD) return `Good (${BITRATE_TIERS.STANDARD}+ kbps)`;
+    if (bitrate >= BITRATE_TIERS.LOW) return `Standard (${BITRATE_TIERS.LOW}+ kbps)`;
+    if (bitrate >= BITRATE_TIERS.MINIMUM) return `Low (${BITRATE_TIERS.MINIMUM}+ kbps)`;
+    return `Very Low (<${BITRATE_TIERS.MINIMUM} kbps)`;
   }
 
   getVideoQualityRating(height) {
-    if (height >= 2160) return '4K (2160p)';
-    if (height >= 1440) return '2K (1440p)';
-    if (height >= 1080) return 'Full HD (1080p)';
-    if (height >= 720) return 'HD (720p)';
-    if (height >= 480) return 'SD (480p)';
-    return 'Low Quality (<480p)';
+    if (height >= RESOLUTION_TIERS.UHD) return `4K (${RESOLUTION_TIERS.UHD}p)`;
+    if (height >= RESOLUTION_TIERS.QHD) return `2K (${RESOLUTION_TIERS.QHD}p)`;
+    if (height >= RESOLUTION_TIERS.FHD) return `Full HD (${RESOLUTION_TIERS.FHD}p)`;
+    if (height >= RESOLUTION_TIERS.HD) return `HD (${RESOLUTION_TIERS.HD}p)`;
+    if (height >= RESOLUTION_TIERS.SD) return `SD (${RESOLUTION_TIERS.SD}p)`;
+    return `Low Quality (<${RESOLUTION_TIERS.SD}p)`;
   }
 
   bytesToMB(bytes) {
@@ -1320,8 +1370,7 @@ class DownloadService {
   }
 
   estimateConvertedSize(originalBitrate, targetFormat) {
-    const multipliers = { mp3: 1.2, flac: 4.0, aac: 1.0 };
-    const multiplier = multipliers[targetFormat] || 1.0;
+    const multiplier = CODEC_SIZE_MULTIPLIERS[targetFormat] ?? 1.0;
     const estimatedMB = originalBitrate * 0.0075 * multiplier;
     return estimatedMB.toFixed(1);
   }
