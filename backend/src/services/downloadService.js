@@ -1385,3 +1385,148 @@ class DownloadService {
 }
 
 export default new DownloadService();
+
+// ── Pure utility exports (testable without instantiation) ─────────────────────
+// These functions have zero external dependencies (no FS, no network, no DB).
+// Exported as standalone functions so unit tests can import them directly
+// without triggering the DownloadService constructor (which runs init/yt-dlp).
+
+/**
+ * Sanitize a filename by removing illegal characters and trimming whitespace.
+ * @param {string} filename
+ * @returns {string}
+ */
+export const sanitizeFilename = (filename) =>
+  filename
+    .replace(/[<>:"/\\|?*]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .substring(0, 100);
+
+/**
+ * Return a human-readable audio quality label for a given bitrate in kbps.
+ * @param {number} bitrate
+ * @returns {string}
+ */
+export const getAudioQualityRating = (bitrate) => {
+  if (bitrate >= BITRATE_TIERS.HIGH) return `Excellent (${BITRATE_TIERS.HIGH}+ kbps)`;
+  if (bitrate >= BITRATE_TIERS.MEDIUM) return `Very Good (${BITRATE_TIERS.MEDIUM}+ kbps)`;
+  if (bitrate >= BITRATE_TIERS.STANDARD) return `Good (${BITRATE_TIERS.STANDARD}+ kbps)`;
+  if (bitrate >= BITRATE_TIERS.LOW) return `Standard (${BITRATE_TIERS.LOW}+ kbps)`;
+  if (bitrate >= BITRATE_TIERS.MINIMUM) return `Low (${BITRATE_TIERS.MINIMUM}+ kbps)`;
+  return `Very Low (<${BITRATE_TIERS.MINIMUM} kbps)`;
+};
+
+/**
+ * Return a human-readable video quality label for a given resolution height in pixels.
+ * @param {number} height
+ * @returns {string}
+ */
+export const getVideoQualityRating = (height) => {
+  if (height >= RESOLUTION_TIERS.UHD) return `4K (${RESOLUTION_TIERS.UHD}p)`;
+  if (height >= RESOLUTION_TIERS.QHD) return `2K (${RESOLUTION_TIERS.QHD}p)`;
+  if (height >= RESOLUTION_TIERS.FHD) return `Full HD (${RESOLUTION_TIERS.FHD}p)`;
+  if (height >= RESOLUTION_TIERS.HD) return `HD (${RESOLUTION_TIERS.HD}p)`;
+  if (height >= RESOLUTION_TIERS.SD) return `SD (${RESOLUTION_TIERS.SD}p)`;
+  return `Low Quality (<${RESOLUTION_TIERS.SD}p)`;
+};
+
+/**
+ * Convert bytes to megabytes string. Returns null for zero/falsy input.
+ * @param {number} bytes
+ * @returns {string | null}
+ */
+export const bytesToMB = (bytes) => {
+  if (!bytes || bytes === 0) return null;
+  return (bytes / (1024 * 1024)).toFixed(1);
+};
+
+/**
+ * Estimate output file size in MB after codec conversion.
+ * @param {number} originalBitrate  — source bitrate in kbps
+ * @param {'mp3' | 'flac' | 'aac'} targetFormat
+ * @returns {string}  — estimated size as a string like "12.3"
+ */
+export const estimateConvertedSize = (originalBitrate, targetFormat) => {
+  const multiplier = CODEC_SIZE_MULTIPLIERS[targetFormat] ?? 1.0;
+  const estimatedMB = originalBitrate * 0.0075 * multiplier;
+  return estimatedMB.toFixed(1);
+};
+
+/**
+ * Return the human-readable name for a format config object.
+ * @param {{ filter: string, type?: string }} formatConfig
+ * @returns {string}
+ */
+export const getFormatName = (formatConfig) => {
+  if (formatConfig.filter === 'audioonly') return formatConfig.type || 'audio';
+  if (formatConfig.filter === 'audioandvideo') return formatConfig.type || 'mp4';
+  if (formatConfig.filter === 'videoonly') return formatConfig.type || 'mp4';
+  return 'unknown';
+};
+
+/**
+ * Parse a frontend formatId string into a structured descriptor.
+ * @param {string | null | undefined} formatId
+ * @returns {{ kind: 'generic' | 'dash' | 'single', videoItag?: number, audioItag?: number, itag?: number }}
+ */
+export const parseFormatId = (formatId) => {
+  if (!formatId || formatId === 'best' || formatId === 'bestaudio' || formatId === 'converted') {
+    return { kind: 'generic' };
+  }
+  if (formatId.includes('+')) {
+    const [v, a] = formatId.split('+').map((s) => Number(s.trim()));
+    if (Number.isFinite(v) && Number.isFinite(a)) return { kind: 'dash', videoItag: v, audioItag: a };
+  }
+  const itag = Number(formatId);
+  if (Number.isFinite(itag)) return { kind: 'single', itag };
+  return { kind: 'generic' };
+};
+
+/**
+ * Map a download format string to the Innertube download options object.
+ * @param {string} format
+ * @returns {{ type: string, quality: string, format: string }}
+ */
+export const mapToInnertubeOptions = (format) => {
+  switch (format) {
+    case 'audioonly':
+    case 'audioonly_aac':
+    case 'audioonly_m4a':
+    case 'audioonly_mp3':
+    case 'audioonly_flac':
+    case 'audioonly_wav':
+      return { type: 'audio', quality: 'best', format: 'mp4' };
+    case 'audioonly_opus':
+      return { type: 'audio', quality: 'best', format: 'webm' };
+    case 'audioandvideo':
+      return { type: 'video+audio', quality: 'best', format: 'mp4' };
+    case 'videoonly':
+      return { type: 'video', quality: 'best', format: 'mp4' };
+    default:
+      return { type: 'audio', quality: 'best', format: 'mp4' };
+  }
+};
+
+/**
+ * Return the ffmpeg conversion target format, or null if no conversion is needed.
+ * @param {string} format
+ * @returns {'mp3' | 'flac' | 'wav' | null}
+ */
+export const audioConversionTarget = (format) => {
+  if (format === 'audioonly_mp3') return 'mp3';
+  if (format === 'audioonly_flac') return 'flac';
+  if (format === 'audioonly_wav') return 'wav';
+  return null;
+};
+
+/**
+ * Return the temporary file extension to use when streaming before conversion.
+ * @param {string} format
+ * @returns {string}
+ */
+export const tempExtForFormat = (format) => {
+  if (format === 'audioonly_opus') return 'webm';
+  if (format === 'audioandvideo' || format === 'videoonly') return 'mp4';
+  return 'm4a';
+};

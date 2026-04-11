@@ -7,7 +7,9 @@
     "dev": "nodemon src/index.js",
     "start": "node src/index.js",
     "seed:songs": "node src/seeds/songs.js",
-    "seed:albums": "node src/seeds/albums.js"
+    "seed:albums": "node src/seeds/albums.js",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "keywords": [],
   "type": "module",
@@ -33,6 +35,7 @@
     "youtubei.js": "^17.0.1"
   },
   "devDependencies": {
-    "nodemon": "^3.1.7"
+    "nodemon": "^3.1.7",
+    "vitest": "^4.1.4"
   }
 }
