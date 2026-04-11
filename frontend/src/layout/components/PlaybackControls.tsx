@@ -7,6 +7,7 @@ import {
   Pause,
   Play,
   Repeat,
+  Repeat1,
   Shuffle,
   SkipBack,
   SkipForward,
@@ -14,12 +15,12 @@ import {
   Volume2,
   VolumeX,
 } from 'lucide-react';
-import React, { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ComponentPropsWithoutRef } from 'react';
 import * as SliderPrimitive from '@radix-ui/react-slider';
 import { cn } from '@/lib/utils';
 import { useShallow } from 'zustand/react/shallow';
 
-type VolumeSliderProps = React.ComponentPropsWithoutRef<typeof SliderPrimitive.Root> & {
+type VolumeSliderProps = ComponentPropsWithoutRef<typeof SliderPrimitive.Root> & {
   orientation?: 'horizontal' | 'vertical';
 };
 
@@ -73,6 +74,10 @@ export const PlaybackControls = () => {
     setVolume,
     isMuted,
     toggleMute,
+    isShuffled,
+    repeatMode,
+    toggleShuffle,
+    cycleRepeatMode,
   } = usePlayerStore(
     useShallow((s) => ({
       currentSong: s.currentSong,
@@ -87,6 +92,10 @@ export const PlaybackControls = () => {
       setVolume: s.setVolume,
       isMuted: s.isMuted,
       toggleMute: s.toggleMute,
+      isShuffled: s.isShuffled,
+      repeatMode: s.repeatMode,
+      toggleShuffle: s.toggleShuffle,
+      cycleRepeatMode: s.cycleRepeatMode,
     }))
   );
 
@@ -129,10 +138,32 @@ export const PlaybackControls = () => {
     };
   }, [showMobileVolume]);
 
+  // Keyboard shortcuts: S = shuffle, R = repeat (only when no input focused)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement).tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+
+      if (e.key === 's' || e.key === 'S') {
+        toggleShuffle();
+      } else if (e.key === 'r' || e.key === 'R') {
+        cycleRepeatMode();
+      }
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [toggleShuffle, cycleRepeatMode]);
+
   const getVolumeIcon = () => {
     if (isMuted || volume === 0) return <VolumeX className="h-4 w-4" />;
     if (volume < 50) return <Volume1 className="h-4 w-4" />;
     return <Volume2 className="h-4 w-4" />;
+  };
+
+  const getRepeatIcon = () => {
+    if (repeatMode === 'one') return <Repeat1 className="h-4 w-4" />;
+    return <Repeat className="h-4 w-4" />;
   };
 
   const handleSeek = (value: number[]) => {
@@ -193,10 +224,15 @@ export const PlaybackControls = () => {
         {/* player controls*/}
         <div className="flex flex-col items-center gap-1 sm:gap-2 flex-shrink-0 mx-2 sm:flex-1 sm:max-w-[45%]">
           <div className="flex items-center gap-2 sm:gap-6">
+            {/* Shuffle button */}
             <Button
               size="icon"
               variant="ghost"
-              className="hidden sm:inline-flex hover:text-white text-zinc-400">
+              onClick={toggleShuffle}
+              className={cn(
+                'hidden sm:inline-flex hover:text-white',
+                isShuffled ? 'text-emerald-400' : 'text-zinc-400'
+              )}>
               <Shuffle className="h-4 w-4" />
             </Button>
 
@@ -239,6 +275,18 @@ export const PlaybackControls = () => {
               <SkipForward className="h-4 w-4" />
             </Button>
 
+            {/* Repeat button */}
+            <Button
+              size="icon"
+              variant="ghost"
+              onClick={cycleRepeatMode}
+              className={cn(
+                'hidden sm:inline-flex hover:text-white',
+                repeatMode !== 'none' ? 'text-emerald-400' : 'text-zinc-400'
+              )}>
+              {getRepeatIcon()}
+            </Button>
+
             {/* Mobile Volume Control */}
             <div className="relative sm:hidden" ref={mobileVolumeRef}>
               <Button
@@ -270,13 +318,6 @@ export const PlaybackControls = () => {
                 </div>
               )}
             </div>
-
-            <Button
-              size="icon"
-              variant="ghost"
-              className="hidden sm:inline-flex hover:text-white text-zinc-400">
-              <Repeat className="h-4 w-4" />
-            </Button>
           </div>
 
           {/* Mobile song slider */}

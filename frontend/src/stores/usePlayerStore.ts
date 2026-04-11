@@ -7,6 +7,16 @@ const emitActivity = (activity: string) => {
   if (socket?.auth) socket.emit('update_activity', { activity });
 };
 
+/** Fisher-Yates shuffle — returns a new shuffled copy */
+const fisherYatesShuffle = (arr: number[]): number[] => {
+  const shuffled = [...arr];
+  for (let i = shuffled.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+  }
+  return shuffled;
+};
+
 interface PlayerStore {
   currentSong: Song | null;
   isPlaying: boolean;
@@ -17,6 +27,9 @@ interface PlayerStore {
   volume: number;
   isMuted: boolean;
   previousVolume: number;
+  isShuffled: boolean;
+  repeatMode: 'none' | 'one' | 'all';
+  shuffledIndices: number[];
 
   initializeQueue: (songs: Song[]) => void;
   playAlbum: (songs: Song[], startIndex?: number) => void;
@@ -29,6 +42,8 @@ interface PlayerStore {
   seekTo: (time: number) => void;
   setVolume: (volume: number) => void;
   toggleMute: () => void;
+  toggleShuffle: () => void;
+  cycleRepeatMode: () => void;
 }
 
 export const usePlayerStore = create<PlayerStore>((set, get) => ({
@@ -41,6 +56,9 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
   volume: 75,
   isMuted: false,
   previousVolume: 75,
+  isShuffled: false,
+  repeatMode: 'none',
+  shuffledIndices: [],
 
   initializeQueue: (songs: Song[]) => {
     const { currentSong } = get();
@@ -85,14 +103,51 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
   },
 
   playNext: () => {
-    const { currentIndex, queue } = get();
+    const { currentIndex, queue, repeatMode, isShuffled, shuffledIndices } = get();
+
+    // repeat one → replay current song
+    if (repeatMode === 'one') {
+      const currentSong = queue[currentIndex];
+      if (currentSong) {
+        emitActivity(`Playing ${currentSong.title} by ${currentSong.artist}`);
+        // Trigger a re-play by toggling isPlaying off then on, but the
+        // AudioPlayer listens to currentSong changes. Emit same song again
+        // via a temporary null trick isn't clean — instead we dispatch a
+        // custom event that AudioPlayer can use to seek to 0 and resume.
+        window.dispatchEvent(new CustomEvent('player-restart'));
+      }
+      return;
+    }
+
+    if (isShuffled && shuffledIndices.length > 0) {
+      // find position of currentIndex inside shuffledIndices
+      const pos = shuffledIndices.indexOf(currentIndex);
+      const nextPos = pos + 1;
+
+      if (nextPos < shuffledIndices.length) {
+        const nextIndex = shuffledIndices[nextPos];
+        const nextSong = queue[nextIndex];
+        emitActivity(`Playing ${nextSong.title} by ${nextSong.artist}`);
+        set({ currentSong: nextSong, currentIndex: nextIndex, isPlaying: true });
+      } else if (repeatMode === 'all') {
+        // wrap to beginning of shuffled order
+        const nextIndex = shuffledIndices[0];
+        const nextSong = queue[nextIndex];
+        emitActivity(`Playing ${nextSong.title} by ${nextSong.artist}`);
+        set({ currentSong: nextSong, currentIndex: nextIndex, isPlaying: true });
+      } else {
+        set({ isPlaying: false });
+      }
+      return;
+    }
+
     const nextIndex = currentIndex + 1;
 
     if (nextIndex < queue.length) {
       const nextSong = queue[nextIndex];
       emitActivity(`Playing ${nextSong.title} by ${nextSong.artist}`);
       set({ currentSong: nextSong, currentIndex: nextIndex, isPlaying: true });
-    } else if (queue.length > 0) {
+    } else if (repeatMode === 'all' && queue.length > 0) {
       const firstSong = queue[0];
       emitActivity(`Playing ${firstSong.title} by ${firstSong.artist}`);
       set({ currentSong: firstSong, currentIndex: 0, isPlaying: true });
@@ -102,17 +157,49 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
   },
 
   playPrevious: () => {
-    const { currentIndex, queue } = get();
+    const { currentIndex, queue, repeatMode, isShuffled, shuffledIndices } = get();
+
+    // repeat one → restart current
+    if (repeatMode === 'one') {
+      window.dispatchEvent(new CustomEvent('player-restart'));
+      return;
+    }
+
+    if (isShuffled && shuffledIndices.length > 0) {
+      const pos = shuffledIndices.indexOf(currentIndex);
+      const prevPos = pos - 1;
+
+      if (prevPos >= 0) {
+        const prevIndex = shuffledIndices[prevPos];
+        const prevSong = queue[prevIndex];
+        emitActivity(`Playing ${prevSong.title} by ${prevSong.artist}`);
+        set({ currentSong: prevSong, currentIndex: prevIndex, isPlaying: true });
+      } else if (repeatMode === 'all') {
+        // wrap to end of shuffled order
+        const prevIndex = shuffledIndices[shuffledIndices.length - 1];
+        const prevSong = queue[prevIndex];
+        emitActivity(`Playing ${prevSong.title} by ${prevSong.artist}`);
+        set({ currentSong: prevSong, currentIndex: prevIndex, isPlaying: true });
+      } else {
+        // already at start — stay on current
+        window.dispatchEvent(new CustomEvent('player-restart'));
+      }
+      return;
+    }
+
     const prevIndex = currentIndex - 1;
 
     if (prevIndex >= 0) {
       const prevSong = queue[prevIndex];
       emitActivity(`Playing ${prevSong.title} by ${prevSong.artist}`);
       set({ currentSong: prevSong, currentIndex: prevIndex, isPlaying: true });
-    } else if (queue.length > 0) {
+    } else if (repeatMode === 'all' && queue.length > 0) {
       const lastSong = queue[queue.length - 1];
       emitActivity(`Playing ${lastSong.title} by ${lastSong.artist}`);
       set({ currentSong: lastSong, currentIndex: queue.length - 1, isPlaying: true });
+    } else if (queue.length > 0) {
+      // at start with no repeat — restart current song
+      window.dispatchEvent(new CustomEvent('player-restart'));
     } else {
       set({ isPlaying: false });
     }
@@ -179,5 +266,34 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
       set({ previousVolume: volume });
       get().setVolume(0);
     }
+  },
+
+  toggleShuffle: () => {
+    const { isShuffled, queue, currentIndex } = get();
+
+    if (!isShuffled) {
+      // Build shuffled indices: Fisher-Yates, then move currentIndex to front
+      const indices = Array.from({ length: queue.length }, (_, i) => i);
+      const shuffled = fisherYatesShuffle(indices);
+      // Ensure current song plays first in the shuffled order
+      const currentPos = shuffled.indexOf(currentIndex);
+      if (currentPos !== -1) {
+        shuffled.splice(currentPos, 1);
+        shuffled.unshift(currentIndex);
+      }
+      set({ isShuffled: true, shuffledIndices: shuffled });
+    } else {
+      set({ isShuffled: false, shuffledIndices: [] });
+    }
+  },
+
+  cycleRepeatMode: () => {
+    const { repeatMode } = get();
+    const next: Record<'none' | 'one' | 'all', 'none' | 'one' | 'all'> = {
+      none: 'all',
+      all: 'one',
+      one: 'none',
+    };
+    set({ repeatMode: next[repeatMode] });
   },
 }));
