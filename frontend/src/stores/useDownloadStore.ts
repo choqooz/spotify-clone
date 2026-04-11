@@ -62,7 +62,7 @@ interface QualityInfo {
   quality?: string;
 }
 
-interface ActiveDownload {
+export interface ActiveDownload {
   id: string;
   type: 'song' | 'album';
   title: string;
@@ -77,6 +77,15 @@ interface ActiveDownload {
   qualityInfo?: QualityInfo;
   artist?: string;
   fileSize?: string;
+}
+
+export interface VideoInfo {
+  id: string;
+  title: string;
+  duration: number;
+  uploader: string;
+  description: string;
+  thumbnail: string;
 }
 
 export interface FormatOption {
@@ -149,7 +158,7 @@ interface DownloadStore {
   setQuality: (quality: string | number) => void;
   clearHistory: () => void;
   removeFromHistory: (id: string) => void;
-  getVideoInfo: (videoId: string) => Promise<any>;
+  getVideoInfo: (videoId: string) => Promise<VideoInfo>;
   getAvailableFormats: (videoId: string) => Promise<void>;
   clearAvailableFormats: () => void;
 }

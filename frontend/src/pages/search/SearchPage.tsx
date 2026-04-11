@@ -6,7 +6,7 @@ import { useYouTubeStore } from '@/stores/useYouTubeStore';
 import { usePlayerStore } from '@/stores/usePlayerStore';
 import { Search, Loader, Play, Pause } from 'lucide-react';
 import { Topbar } from '@/components/Topbar';
-import { Song } from '@/types';
+import { Song, YouTubeSong } from '@/types';
 import confetti from 'canvas-confetti';
 import { useNavigate } from 'react-router-dom';
 import { useDebounce } from '@/hooks/useDebounce';
@@ -97,15 +97,18 @@ export const SearchPage = () => {
     }
   }, [searchQuery, searchType, displayText]);
 
-  // Auto-search when search type changes (if there's already a query)
+  // Keep a stable ref to the latest searchQuery value so the tab-switch effect
+  // can read it without becoming a reactive dependency (avoids re-running on
+  // every keystroke — we only want to re-search when the *tab* changes).
+  const searchQueryRef = useRef(searchQuery);
+  searchQueryRef.current = searchQuery;
+
+  // Auto-search when search type changes (if there's already a query).
   useEffect(() => {
-    if (searchQuery && searchQuery.trim()) {
-      searchYouTube(searchQuery, searchType);
+    if (searchQueryRef.current && searchQueryRef.current.trim()) {
+      searchYouTube(searchQueryRef.current, searchType);
     }
-    // searchQuery and searchYouTube intentionally omitted: this only fires on
-    // tab switch (searchType), not on every keystroke.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchType]);
+  }, [searchType, searchYouTube]);
 
   // Get search suggestions when user types
   useEffect(() => {
@@ -197,7 +200,7 @@ export const SearchPage = () => {
     }
   };
 
-  const handlePlay = (youtubeSong: any) => {
+  const handlePlay = (youtubeSong: YouTubeSong) => {
     const isCurrentSong = currentSong?._id === youtubeSong.videoId;
     if (isCurrentSong) {
       togglePlay();
@@ -205,7 +208,7 @@ export const SearchPage = () => {
     }
 
     // Build the full queue from all current search results so next/prev work correctly
-    const queue: Song[] = searchResults.map((r: any) => ({
+    const queue: Song[] = searchResults.map((r) => ({
       _id: r.videoId,
       title: r.title,
       artist: r.artist,
@@ -223,9 +226,9 @@ export const SearchPage = () => {
     playAlbum(queue, startIndex === -1 ? 0 : startIndex);
   };
 
-  const handleAlbumClick = (album: any) => {
+  const handleAlbumClick = (album: YouTubeSong) => {
     // Navegar a la página de álbum de YouTube
-    const albumId = album.albumId || album.videoId || album._id;
+    const albumId = album.albumId ?? album.videoId;
     if (albumId) {
       navigate(`/youtube-albums/${albumId}`);
     }

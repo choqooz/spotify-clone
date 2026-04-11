@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useDownloadStore } from '@/stores/useDownloadStore';
+import type { ActiveDownload } from '@/stores/useDownloadStore';
 import { useShallow } from 'zustand/react/shallow';
 import {
   Download,
@@ -38,7 +39,7 @@ const getTypeIcon = (type: string) => {
   );
 };
 
-const formatProgress = (download: any) => {
+const formatProgress = (download: ActiveDownload) => {
   if (download.type === 'album' && download.albumProgress) {
     const {
       currentSong,

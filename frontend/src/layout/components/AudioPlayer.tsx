@@ -1,7 +1,7 @@
 import { usePlayerStore } from '@/stores/usePlayerStore';
 import { useEffect, useRef, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
-import YouTube, { type YouTubePlayer } from 'react-youtube';
+import YouTube, { type YouTubePlayer, type YouTubeEvent } from 'react-youtube';
 import { Button } from '@/components/ui/button';
 import { Play } from 'lucide-react';
 
@@ -141,7 +141,7 @@ export const AudioPlayer = () => {
   }, [currentSong, isYouTubeSong, isPlaying]);
 
   // YouTube event handlers
-  const onYouTubeReady = (event: any) => {
+  const onYouTubeReady = (event: YouTubeEvent) => {
     youtubeRef.current = event.target;
     setYoutubeReady(true);
 
@@ -164,7 +164,7 @@ export const AudioPlayer = () => {
     playNext();
   };
 
-  const onYouTubeError = (event: any) => {
+  const onYouTubeError = (event: YouTubeEvent<number>) => {
     const errorCode = event.data;
     console.error('YouTube player error - Code:', errorCode);
     console.error('Current video ID:', currentSong?.videoId);
@@ -198,7 +198,7 @@ export const AudioPlayer = () => {
     console.error('Error message:', errorMessage);
   };
 
-  const onYouTubeStateChange = (event: any) => {
+  const onYouTubeStateChange = (event: YouTubeEvent<number>) => {
     const state = event.data;
 
     if (state === 1) {
@@ -277,23 +277,17 @@ export const AudioPlayer = () => {
 
   // Listen for seek events (from lyrics panel and other components)
   useEffect(() => {
-    const handleSeekToTime = (event: any) => {
+    const handleSeekToTime = (event: CustomEvent<{ time: number }>) => {
       const time = event.detail.time;
 
-      console.log('🎯 Received seek request to time:', time);
-
       if (isYouTubeSong && youtubeRef.current) {
-        // YouTube video seek
-        console.log('📺 Seeking YouTube video to:', time);
         safeYouTubeCall(() => youtubeRef.current.seekTo(time, true));
       } else if (audioRef.current) {
-        // Local audio seek
-        console.log('🎵 Seeking audio to:', time);
         audioRef.current.currentTime = time;
       }
     };
 
-    const handleYouTubeSeek = (event: any) => {
+    const handleYouTubeSeek = (event: CustomEvent<{ time: number }>) => {
       const time = event.detail.time;
 
       if (youtubeRef.current && isYouTubeSong) {
@@ -301,7 +295,7 @@ export const AudioPlayer = () => {
       }
     };
 
-    const handleYouTubeVolume = (event: any) => {
+    const handleYouTubeVolume = (event: CustomEvent<{ volume: number }>) => {
       const volume = event.detail.volume;
 
       if (youtubeRef.current && isYouTubeSong) {
@@ -309,15 +303,17 @@ export const AudioPlayer = () => {
       }
     };
 
-    // Listen for general seek events (from lyrics)
-    window.addEventListener('seekToTime', handleSeekToTime);
-    window.addEventListener('youtube-seek', handleYouTubeSeek);
-    window.addEventListener('youtube-volume', handleYouTubeVolume);
+    // Listen for general seek events (from lyrics).
+    // Cast to EventListener because window.addEventListener uses the base Event
+    // type for string event names; our handlers expect the narrower CustomEvent.
+    window.addEventListener('seekToTime', handleSeekToTime as EventListener);
+    window.addEventListener('youtube-seek', handleYouTubeSeek as EventListener);
+    window.addEventListener('youtube-volume', handleYouTubeVolume as EventListener);
 
     return () => {
-      window.removeEventListener('seekToTime', handleSeekToTime);
-      window.removeEventListener('youtube-seek', handleYouTubeSeek);
-      window.removeEventListener('youtube-volume', handleYouTubeVolume);
+      window.removeEventListener('seekToTime', handleSeekToTime as EventListener);
+      window.removeEventListener('youtube-seek', handleYouTubeSeek as EventListener);
+      window.removeEventListener('youtube-volume', handleYouTubeVolume as EventListener);
     };
   }, [isYouTubeSong]);
 

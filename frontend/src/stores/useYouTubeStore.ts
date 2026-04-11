@@ -2,21 +2,7 @@ import { create } from 'zustand';
 import { axiosInstance } from '@/lib/axios';
 import { getApiError } from '@/lib/apiError';
 import toast from 'react-hot-toast';
-import type { Album } from '@/types';
-
-interface YouTubeSong {
-  videoId: string;
-  albumId?: string;
-  title: string;
-  artist: string;
-  duration: number;
-  thumbnails?: Array<{
-    url: string;
-    width: number;
-    height: number;
-  }>;
-  imageUrl?: string;
-}
+import type { Album, YouTubeSong } from '@/types';
 
 type SearchType = 'songs' | 'albums' | 'videos';
 

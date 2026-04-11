@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect, type ReactNode } from 'react';
 import { Download, Loader } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -18,7 +18,7 @@ interface QualityDropdownProps {
   onDownload?: (format: string, quality: string) => void;
   size?: 'sm' | 'default' | 'lg' | 'icon';
   variant?: 'default' | 'secondary' | 'outline';
-  children?: React.ReactNode;
+  children?: ReactNode;
   className?: string;
   contentType?: 'songs' | 'videos' | 'both';
 }

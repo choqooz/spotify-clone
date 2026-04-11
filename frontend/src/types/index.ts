@@ -57,3 +57,17 @@ export interface User {
   imageUrl: string;
   isAdmin?: boolean;
 }
+
+export interface YouTubeSong {
+  videoId: string;
+  albumId?: string;
+  title: string;
+  artist: string;
+  duration: number;
+  thumbnails?: Array<{
+    url: string;
+    width: number;
+    height: number;
+  }>;
+  imageUrl?: string;
+}
