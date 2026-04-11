@@ -12,6 +12,8 @@ import { LyricsPanel } from '@/components/LyricsPanel';
 import { DownloadPanel } from '@/components/DownloadPanel';
 import { useState } from 'react';
 import { useIsMobile } from '@/hooks/useIsMobile';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
+import { PlayerErrorFallback } from '@/components/PlayerErrorFallback';
 
 export const MainLayout = () => {
   const isMobile = useIsMobile();
@@ -21,15 +23,21 @@ export const MainLayout = () => {
     // Layout móvil: contenido principal → player → bottom navigation
     return (
       <div className="h-dvh bg-black text-white flex flex-col">
-        <AudioPlayer />
+        <ErrorBoundary fallback={<PlayerErrorFallback />}>
+          <AudioPlayer />
+        </ErrorBoundary>
 
         {/* Contenido principal - ocupa todo el espacio disponible */}
-        <div className="flex-1 overflow-hidden">
-          <Outlet />
-        </div>
+        <ErrorBoundary>
+          <div className="flex-1 overflow-hidden">
+            <Outlet />
+          </div>
+        </ErrorBoundary>
 
         {/* Player arriba del bottom nav */}
-        <PlaybackControls />
+        <ErrorBoundary fallback={<PlayerErrorFallback />}>
+          <PlaybackControls />
+        </ErrorBoundary>
 
         <div className="bg-zinc-900 border-t border-zinc-800">
           <LeftSidebar onOpenDownloadPanel={() => setShowDownloadPanel(true)} />
@@ -50,7 +58,9 @@ export const MainLayout = () => {
       <ResizablePanelGroup
         direction="horizontal"
         className="flex-1 flex h-full overflow-hidden p-2">
-        <AudioPlayer />
+        <ErrorBoundary fallback={<PlayerErrorFallback />}>
+          <AudioPlayer />
+        </ErrorBoundary>
 
         {/* left sidebar */}
         <ResizablePanel defaultSize={20} minSize={10} maxSize={30}>
@@ -61,7 +71,9 @@ export const MainLayout = () => {
 
         {/* Main content */}
         <ResizablePanel defaultSize={60}>
-          <Outlet />
+          <ErrorBoundary>
+            <Outlet />
+          </ErrorBoundary>
         </ResizablePanel>
 
         <ResizableHandle className="w-2 bg-black rounded-lg transition-colors" />
@@ -76,7 +88,9 @@ export const MainLayout = () => {
         </ResizablePanel>
       </ResizablePanelGroup>
 
-      <PlaybackControls />
+      <ErrorBoundary fallback={<PlayerErrorFallback />}>
+        <PlaybackControls />
+      </ErrorBoundary>
 
       <LyricsPanel />
       <DownloadPanel
