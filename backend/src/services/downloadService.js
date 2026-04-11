@@ -2,9 +2,10 @@ import { spawn } from 'child_process';
 import path from 'path';
 import fs from 'fs/promises';
 import { createWriteStream } from 'fs';
-import { Innertube, Utils } from 'youtubei.js';
-import { getInnertube } from '../lib/ytmusic.js';
+import { Utils } from 'youtubei.js';
+import { getInnertube, getAuthedInnertube } from '../lib/ytmusic.js';
 import { logger } from '../lib/logger.js';
+import { VALID_FORMATS, isValidFormat } from '../lib/downloadFormats.js';
 
 class DownloadService {
   constructor() {
@@ -18,8 +19,74 @@ class DownloadService {
     this._activeProcs = new Map(); // downloadKey → yt-dlp process
     /** @type {Map<string, ReadableStream<Uint8Array>>} */
     this._activeStreams = new Map(); // downloadKey → Innertube stream
-    /** @type {Promise<import('youtubei.js').Innertube> | null} */
-    this._authedYt = null; // cached authed Innertube (cookies + player)
+    /**
+     * Tracks in-flight downloads (metadata only — not the stream itself).
+     * Moved here from download.controller.js so state lives in the service layer.
+     * @type {Map<string, {type: string, startTime: Date, [key: string]: any}>}
+     */
+    this._downloadQueue = new Map();
+  }
+
+  // ── Download queue management ─────────────────────────────────────────────────
+
+  /**
+   * Returns the queue entry for a given downloadKey, or undefined if not found.
+   * @param {string} downloadKey
+   */
+  getDownloadStatus(downloadKey) {
+    return this._downloadQueue.get(downloadKey);
+  }
+
+  /**
+   * Returns all active downloads as an array of { downloadKey, ...metadata }.
+   */
+  getActiveDownloads() {
+    return Array.from(this._downloadQueue.entries()).map(([key, value]) => ({
+      downloadKey: key,
+      ...value,
+    }));
+  }
+
+  /**
+   * Removes the queue entry and kills any active stream/process for the key.
+   * @param {string} downloadKey
+   * @returns {boolean} true if there was an active download to cancel
+   */
+  cancelDownload(downloadKey) {
+    const wasActive = this._downloadQueue.has(downloadKey);
+    this._downloadQueue.delete(downloadKey);
+    this.killDownload(downloadKey);
+    return wasActive;
+  }
+
+  /**
+   * Validates that `format` is allowed for the given download type.
+   * Throws an Error with a human-readable message if invalid.
+   * @param {string} format
+   * @param {'song' | 'album'} type
+   */
+  validateFormat(format, type) {
+    if (!isValidFormat(format, type)) {
+      const valid = VALID_FORMATS[type]?.join(', ') ?? '';
+      throw new Error(`Invalid format "${format}". Valid formats: ${valid}`);
+    }
+  }
+
+  /**
+   * Register a new download in the queue.
+   * @param {string} downloadKey
+   * @param {object} meta  — arbitrary metadata (type, videoId, format, etc.)
+   */
+  trackDownload(downloadKey, meta) {
+    this._downloadQueue.set(downloadKey, { ...meta, startTime: new Date() });
+  }
+
+  /**
+   * Remove a download from the queue (on success or error).
+   * @param {string} downloadKey
+   */
+  untrackDownload(downloadKey) {
+    this._downloadQueue.delete(downloadKey);
   }
 
   async init() {
@@ -126,27 +193,7 @@ class DownloadService {
     ];
   }
 
-  // Fetch video info via Innertube (youtubei.js) — used for format listing.
-  // Returns data shaped like yt-dlp JSON so existing format parsing works unchanged.
-  // Innertube connects to YouTube's InnerTube API directly, bypassing yt-dlp's
-  // format selection which fails on datacenter IPs.
-  // Parse Netscape cookie file to a cookie header string for Innertube.
-  async _readCookieString() {
-    try {
-      const raw = await fs.readFile(this.cookiesFile, 'utf-8');
-      return raw
-        .split('\n')
-        .filter((line) => line && !line.startsWith('#'))
-        .map((line) => {
-          const parts = line.split('\t');
-          return parts.length >= 7 ? `${parts[5]}=${parts[6]}` : null;
-        })
-        .filter(Boolean)
-        .join('; ');
-    } catch {
-      return '';
-    }
-  }
+  // (Cookie parsing has been moved to lib/ytmusic.js → readCookieString())
 
   // Client priority for info/download. MWEB goes FIRST because on Render's
   // datacenter IP it's the only client whose signed stream URLs actually
@@ -245,28 +292,12 @@ class DownloadService {
     };
   }
 
-  // Fetch video info — tries yt-dlp first (has full format data for downloads),
-  // falls back to Innertube if yt-dlp fails (common on datacenter IPs).
+  // Fetch video info via Innertube directly.
+  // yt-dlp ALWAYS fails on Render datacenter IPs — the yt-dlp-first path
+  // was dead control flow in production and has been removed.
   async _getInfo(url) {
-    try {
-      const cookiesArgs = await this._cookiesArgs();
-      const { stdout } = await this._runCmd('yt-dlp', [
-        ...cookiesArgs,
-        ...this._ytDownloadArgs(),
-        '--format', 'bestaudio/best',
-        '--no-check-formats',
-        '--dump-json',
-        '--no-playlist',
-        '--no-warnings',
-        url,
-      ]);
-      return JSON.parse(stdout.trim());
-    } catch {
-      // yt-dlp failed — extract videoId from URL and use Innertube for basic info
-      const videoId = url.match(/[?&]v=([^&]+)/)?.[1] ?? url.split('/').pop();
-      logger.warn({ videoId }, 'yt-dlp _getInfo failed, falling back to Innertube');
-      return this._getInfoViaInnertube(videoId);
-    }
+    const videoId = url.match(/[?&]v=([^&]+)/)?.[1] ?? url.split('/').pop();
+    return this._getInfoViaInnertube(videoId);
   }
 
   /** Kill the active download for the given key (yt-dlp proc or Innertube stream). */
@@ -335,27 +366,10 @@ class DownloadService {
     return outputFile;
   }
 
-  // Cached authed Innertube. Creating a new one is EXPENSIVE (~15s): fetches
-  // /iframe_api, the full player JS, and runs JsAnalyzer on it. We do it once
-  // and reuse it. Cache misses fall back to the shared singleton.
+  // Delegate to the shared lib/ytmusic.js singleton — single source of truth.
+  // Passes the resolved (writable) cookies path established during init().
   _createAuthedInnertube() {
-    if (this._authedYt) return this._authedYt;
-    this._authedYt = (async () => {
-      const cookieStr = await this._readCookieString();
-      const createOpts = {
-        generate_session_locally: true,
-        retrieve_player: true,
-      };
-      if (cookieStr) createOpts.cookie = cookieStr;
-      try {
-        return await Innertube.create(createOpts);
-      } catch (err) {
-        logger.warn({ err: err.message }, 'Authed Innertube create failed, using shared singleton');
-        this._authedYt = null;
-        return getInnertube();
-      }
-    })();
-    return this._authedYt;
+    return getAuthedInnertube(this.cookiesFile);
   }
 
   // Parse the formatId from the frontend. Examples: "140" → single itag,
@@ -421,6 +435,54 @@ class DownloadService {
     return outputFile;
   }
 
+  // Download DASH streams (video-only + audio-only) and mux with ffmpeg.
+  // Called by _downloadViaInnertube() when the user selected a "videoItag+audioItag" pair.
+  // This is the ONLY way to get > 360p for combined downloads on YouTube since
+  // muxed formats above 360p are rare/deprecated.
+  async _downloadViaDash(info, parsed, { title, timestamp, onProgress, downloadKey }) {
+    if (!this.ffmpegAvailable) {
+      throw new Error('ffmpeg is required to merge DASH video+audio streams');
+    }
+
+    const videoFmt = info.chooseFormat({ itag: parsed.videoItag });
+    const audioFmt = info.chooseFormat({ itag: parsed.audioItag });
+    const videoLen = Number(videoFmt?.content_length ?? 0);
+    const audioLen = Number(audioFmt?.content_length ?? 0);
+    const totalLen = videoLen + audioLen;
+
+    const videoTmp = path.join(this.downloadsDir, `${title}_${timestamp}.v.mp4`);
+    const audioTmp = path.join(this.downloadsDir, `${title}_${timestamp}.a.m4a`);
+    const outputFile = path.join(this.downloadsDir, `${title}_${timestamp}.mp4`);
+
+    onProgress?.({ percent: 0, size: `${(totalLen / 1048576).toFixed(2)}MB`, speed: 'unknown', eta: 'unknown' });
+
+    // Download video stream (0–70% of progress bar)
+    const videoStream = await info.download({ type: 'video', quality: 'best', format: 'mp4', itag: parsed.videoItag });
+    await this._streamToFile(videoStream, videoTmp, {
+      contentLength: videoLen,
+      downloadKey,
+      onProgress: (p) => onProgress?.({ ...p, percent: (p.percent ?? 0) * 0.7 }),
+    });
+
+    // Download audio stream (70–95%)
+    const audioStream = await info.download({ type: 'audio', quality: 'best', format: 'mp4', itag: parsed.audioItag });
+    await this._streamToFile(audioStream, audioTmp, {
+      contentLength: audioLen,
+      downloadKey,
+      onProgress: (p) => onProgress?.({ ...p, percent: 70 + (p.percent ?? 0) * 0.25 }),
+    });
+
+    // Mux (95–100%)
+    onProgress?.({ percent: 96, size: `${(totalLen / 1048576).toFixed(2)}MB`, speed: 'muxing', eta: 'unknown' });
+    await this._ffmpegMerge(videoTmp, audioTmp, outputFile);
+    await Promise.all([
+      fs.unlink(videoTmp).catch(() => {}),
+      fs.unlink(audioTmp).catch(() => {}),
+    ]);
+
+    return { filePath: outputFile, filename: path.basename(outputFile), info };
+  }
+
   // Download a video via Innertube. Tries multiple clients to bypass bot
   // detection on datacenter IPs. Streams to disk with progress events.
   async _downloadViaInnertube(videoId, options = {}) {
@@ -474,51 +536,8 @@ class DownloadService {
     const parsed = this._parseFormatId(formatId);
 
     // ─── DASH path: user chose "videoItag+audioItag" from the dialog ─────────
-    // Download video-only and audio-only separately, then mux with ffmpeg.
-    // This is the ONLY way to get > 360p for combined downloads on YouTube
-    // since muxed formats above 360p are rare/deprecated.
     if (parsed.kind === 'dash') {
-      if (!this.ffmpegAvailable) {
-        throw new Error('ffmpeg is required to merge DASH video+audio streams');
-      }
-
-      const videoFmt = info.chooseFormat({ itag: parsed.videoItag });
-      const audioFmt = info.chooseFormat({ itag: parsed.audioItag });
-      const videoLen = Number(videoFmt?.content_length ?? 0);
-      const audioLen = Number(audioFmt?.content_length ?? 0);
-      const totalLen = videoLen + audioLen;
-
-      const videoTmp = path.join(this.downloadsDir, `${title}_${timestamp}.v.mp4`);
-      const audioTmp = path.join(this.downloadsDir, `${title}_${timestamp}.a.m4a`);
-      const outputFile = path.join(this.downloadsDir, `${title}_${timestamp}.mp4`);
-
-      onProgress?.({ percent: 0, size: `${(totalLen / 1048576).toFixed(2)}MB`, speed: 'unknown', eta: 'unknown' });
-
-      // Download video stream (0–70% of progress bar)
-      const videoStream = await info.download({ type: 'video', quality: 'best', format: 'mp4', itag: parsed.videoItag });
-      await this._streamToFile(videoStream, videoTmp, {
-        contentLength: videoLen,
-        downloadKey,
-        onProgress: (p) => onProgress?.({ ...p, percent: (p.percent ?? 0) * 0.7 }),
-      });
-
-      // Download audio stream (70–95%)
-      const audioStream = await info.download({ type: 'audio', quality: 'best', format: 'mp4', itag: parsed.audioItag });
-      await this._streamToFile(audioStream, audioTmp, {
-        contentLength: audioLen,
-        downloadKey,
-        onProgress: (p) => onProgress?.({ ...p, percent: 70 + (p.percent ?? 0) * 0.25 }),
-      });
-
-      // Mux (95–100%)
-      onProgress?.({ percent: 96, size: `${(totalLen / 1048576).toFixed(2)}MB`, speed: 'muxing', eta: 'unknown' });
-      await this._ffmpegMerge(videoTmp, audioTmp, outputFile);
-      await Promise.all([
-        fs.unlink(videoTmp).catch(() => {}),
-        fs.unlink(audioTmp).catch(() => {}),
-      ]);
-
-      return { filePath: outputFile, filename: path.basename(outputFile), info };
+      return this._downloadViaDash(info, parsed, { title, timestamp, onProgress, downloadKey });
     }
 
     // ─── Single-stream path ──────────────────────────────────────────────────
@@ -639,6 +658,349 @@ class DownloadService {
     }
   }
 
+  // ── getAvailableFormats sub-methods ──────────────────────────────────────────
+
+  /**
+   * Extract and build audio format entries from raw format list.
+   * Returns { audioFormats, audioSourceFormats } so callers can use
+   * audioSourceFormats for DASH pairing logic.
+   */
+  _getAudioFormats(formats) {
+    const audioFormats = [];
+
+    // Prefer native .m4a (AAC) audio-only streams
+    const audioOnlyFormats = formats.filter(
+      (f) =>
+        f.acodec &&
+        f.acodec !== 'none' &&
+        (!f.vcodec || f.vcodec === 'none') &&
+        f.abr &&
+        f.ext === 'm4a'
+    );
+
+    let audioSourceFormats = audioOnlyFormats;
+    if (audioOnlyFormats.length === 0) {
+      const m4aVideoFormats = formats.filter(
+        (f) =>
+          f.acodec &&
+          f.acodec !== 'none' &&
+          f.vcodec &&
+          f.vcodec !== 'none' &&
+          f.ext === 'mp4'
+      );
+
+      audioSourceFormats =
+        m4aVideoFormats.length > 0
+          ? m4aVideoFormats
+          : formats.filter(
+              (f) =>
+                f.acodec &&
+                f.acodec !== 'none' &&
+                f.vcodec &&
+                f.vcodec !== 'none'
+            );
+    }
+
+    audioSourceFormats
+      .sort((a, b) => (a.abr || 0) - (b.abr || 0))
+      .forEach((f, index) => {
+        const bitrate = f.abr ? Math.round(f.abr) : null;
+        const codec = f.acodec || 'unknown';
+        const filesize = f.filesize || f.filesize_approx || 0;
+        const formatName = f.format_note || f.format || 'unknown';
+        const isAudioOnly = audioOnlyFormats.length > 0;
+        const bitrateDisplay = bitrate ? `${bitrate} kbps` : 'Variable';
+        const qualityNote = f.height ? ` (from ${f.height}p video)` : '';
+
+        audioFormats.push({
+          id: `audio_${f.format_id}`,
+          format: 'audioonly',
+          quality: 'highest',
+          formatId: f.format_id,
+          label: `${codec.toUpperCase()} ${bitrateDisplay}${
+            !isAudioOnly ? ' (extracted)' : ''
+          }`,
+          description: isAudioOnly
+            ? formatName
+            : `${formatName}${qualityNote} • Audio extracted from video`,
+          codec,
+          bitrate: bitrate || 'variable',
+          sampleRate: f.asr || 'unknown',
+          filesize,
+          filesizeMB: this.bytesToMB(filesize),
+          type: 'audio',
+          native: isAudioOnly,
+          qualityRank: index + 1,
+          container: f.ext || 'unknown',
+          extracted: !isAudioOnly,
+        });
+      });
+
+    // Converted formats (only if ffmpeg is available)
+    if (this.ffmpegAvailable && audioSourceFormats.length > 0) {
+      const bestAudio = audioSourceFormats[audioSourceFormats.length - 1];
+      const maxBitrate = bestAudio.abr ? Math.round(bestAudio.abr) : 128;
+
+      audioFormats.push({
+        id: 'converted_mp3',
+        format: 'audioonly_mp3',
+        quality: '0',
+        formatId: 'converted',
+        label: `MP3 ~${Math.round(maxBitrate * 0.8)} kbps`,
+        description: 'Converted from best quality',
+        codec: 'mp3',
+        bitrate: Math.round(maxBitrate * 0.8),
+        sampleRate: 'variable',
+        filesize: 0,
+        filesizeMB: '~' + this.estimateConvertedSize(maxBitrate, 'mp3'),
+        type: 'audio',
+        native: false,
+        qualityRank: audioFormats.length + 1,
+        container: 'mp3',
+        note: 'Converted - no quality gain',
+      });
+
+      if (maxBitrate >= 128) {
+        audioFormats.push({
+          id: 'converted_flac',
+          format: 'audioonly_flac',
+          quality: '0',
+          formatId: 'converted',
+          label: 'FLAC Lossless',
+          description: 'Converted from best quality',
+          codec: 'flac',
+          bitrate: 'Lossless',
+          sampleRate: 'variable',
+          filesize: 0,
+          filesizeMB: '~' + this.estimateConvertedSize(maxBitrate, 'flac'),
+          type: 'audio',
+          native: false,
+          qualityRank: audioFormats.length + 1,
+          container: 'flac',
+          note: 'Converted - larger file size',
+        });
+      }
+    }
+
+    return { audioFormats, audioSourceFormats };
+  }
+
+  /**
+   * Build combined (muxed) video format entries.
+   * Returns videoFormats array with a "best" sentinel + individual combined streams.
+   */
+  _getVideoFormats(formats) {
+    const videoFormats = [];
+
+    const videoWithAudioFormats = formats.filter(
+      (f) =>
+        f.vcodec &&
+        f.vcodec !== 'none' &&
+        f.height &&
+        f.acodec &&
+        f.acodec !== 'none'
+    );
+
+    const videoOnlyFormats = formats.filter(
+      (f) =>
+        f.vcodec &&
+        f.vcodec !== 'none' &&
+        f.height &&
+        (!f.acodec || f.acodec === 'none')
+    );
+
+    if (videoWithAudioFormats.length > 0 || videoOnlyFormats.length > 0) {
+      videoFormats.push({
+        id: 'video_best',
+        format: 'audioandvideo',
+        quality: 'highest',
+        formatId: 'best',
+        label: 'Best Quality Available',
+        description: 'Automatically select highest quality (video + audio)',
+        resolution: 'Auto',
+        fps: 'Auto',
+        videoCodec: 'Auto',
+        audioCodec: 'Auto',
+        videoBitrate: 'Auto',
+        audioBitrate: 'Auto',
+        filesize: 0,
+        filesizeMB: 'Variable',
+        type: 'video',
+        qualityRank: 0,
+        container: 'mp4',
+        native: true,
+      });
+    }
+
+    videoWithAudioFormats
+      .sort((a, b) => (a.height || 0) - (b.height || 0))
+      .forEach((f, index) => {
+        const height = f.height || 0;
+        const width = f.width || 0;
+        const fps = f.fps || 'unknown';
+        const vcodec = f.vcodec || 'unknown';
+        const acodec = f.acodec || 'unknown';
+        const vbr = Math.round(f.vbr || 0);
+        const abr = Math.round(f.abr || 0);
+        const filesize = f.filesize || f.filesize_approx || 0;
+        const formatName = f.format_note || f.format || 'unknown';
+
+        videoFormats.push({
+          id: `video_${f.format_id}`,
+          format: 'audioandvideo',
+          quality: 'highest',
+          formatId: f.format_id,
+          label: `${height}p (Combined)`,
+          description: `${formatName} • ${fps} fps • ${vcodec.toUpperCase()}+${acodec.toUpperCase()}`,
+          resolution: `${width}x${height}`,
+          fps,
+          videoCodec: vcodec,
+          audioCodec: acodec,
+          videoBitrate: vbr,
+          audioBitrate: abr,
+          filesize,
+          filesizeMB: this.bytesToMB(filesize),
+          type: 'video',
+          qualityRank: index + 1,
+          container: f.ext || 'mp4',
+          native: true,
+          combined: true,
+        });
+      });
+
+    return { videoFormats, videoOnlyFormats };
+  }
+
+  /**
+   * Build DASH format entries (video-only + best audio paired).
+   * Mutates videoFormats in-place by appending DASH entries.
+   */
+  _getDashFormats(formats, videoFormats, audioSourceFormats) {
+    const videoOnlyFormats = formats.filter(
+      (f) =>
+        f.vcodec &&
+        f.vcodec !== 'none' &&
+        f.height &&
+        (!f.acodec || f.acodec === 'none')
+    );
+
+    if (videoOnlyFormats.length === 0 || audioSourceFormats.length === 0) return;
+
+    const bestAudio = audioSourceFormats.reduce((best, current) =>
+      (current.abr || 0) > (best.abr || 0) ? current : best
+    );
+
+    videoOnlyFormats
+      .filter((f) => f.height >= 720)
+      .sort((a, b) => (a.height || 0) - (b.height || 0))
+      .forEach((f, index) => {
+        const height = f.height || 0;
+        const width = f.width || 0;
+        const fps = f.fps || 'unknown';
+        const vcodec = f.vcodec || 'unknown';
+        const vbr = Math.round(f.vbr || 0);
+        const filesize = f.filesize || f.filesize_approx || 0;
+        const formatName = f.format_note || f.format || 'unknown';
+        const bestAudioBitrate = Math.round(bestAudio.abr || 0);
+
+        videoFormats.push({
+          id: `video_dash_${f.format_id}`,
+          format: 'audioandvideo',
+          quality: 'highest',
+          formatId: `${f.format_id}+${bestAudio.format_id}`,
+          label: `${height}p (DASH)`,
+          description: `${formatName} • ${fps} fps • ${vcodec.toUpperCase()}+${bestAudio.acodec.toUpperCase()} ${bestAudioBitrate}kbps`,
+          resolution: `${width}x${height}`,
+          fps,
+          videoCodec: vcodec,
+          audioCodec: bestAudio.acodec,
+          videoBitrate: vbr,
+          audioBitrate: bestAudioBitrate,
+          filesize,
+          filesizeMB: this.bytesToMB(filesize),
+          type: 'video',
+          qualityRank: videoFormats.length + index + 1,
+          container: 'mp4',
+          native: false,
+          dash: true,
+          note: 'High quality video + best audio combined',
+        });
+      });
+  }
+
+  /**
+   * Build simple/fallback format list: AV1 by resolution, or best-per-resolution fallback.
+   * Returns simpleVideoFormats array.
+   */
+  _getSimpleFormats(videoFormats) {
+    const simpleVideoFormats = [];
+
+    // Prefer AV1 formats grouped by resolution
+    const av1Formats = videoFormats.filter(
+      (f) => f.videoCodec && f.videoCodec.toLowerCase().includes('av01')
+    );
+
+    const resolutionMap = new Map();
+    av1Formats.forEach((format) => {
+      const height = format.resolution
+        ? parseInt(format.resolution.split('x')[1])
+        : 0;
+      if (height >= 360) {
+        const key = `${height}p`;
+        if (
+          !resolutionMap.has(key) ||
+          format.videoBitrate > (resolutionMap.get(key).videoBitrate || 0)
+        ) {
+          resolutionMap.set(key, {
+            ...format,
+            id: `simple_${format.id}`,
+            label: `${height}p (AV1)`,
+            description: `${height}p • AV1 codec • Best quality`,
+            simple: true,
+          });
+        }
+      }
+    });
+
+    Array.from(resolutionMap.values())
+      .sort((a, b) => parseInt(a.label) - parseInt(b.label))
+      .forEach((format) => simpleVideoFormats.push(format));
+
+    // Fallback: best format per resolution (any codec)
+    if (simpleVideoFormats.length === 0) {
+      const resolutionFallback = new Map();
+      videoFormats.forEach((format) => {
+        if (format.qualityRank > 0) {
+          const height = format.resolution
+            ? parseInt(format.resolution.split('x')[1])
+            : 0;
+          if (height >= 360) {
+            const key = `${height}p`;
+            if (
+              !resolutionFallback.has(key) ||
+              format.videoBitrate >
+                (resolutionFallback.get(key).videoBitrate || 0)
+            ) {
+              resolutionFallback.set(key, {
+                ...format,
+                id: `simple_${format.id}`,
+                label: `${height}p (${format.videoCodec.toUpperCase()})`,
+                description: `${height}p • ${format.videoCodec.toUpperCase()} codec`,
+                simple: true,
+              });
+            }
+          }
+        }
+      });
+
+      Array.from(resolutionFallback.values())
+        .sort((a, b) => parseInt(a.label) - parseInt(b.label))
+        .forEach((format) => simpleVideoFormats.push(format));
+    }
+
+    return simpleVideoFormats;
+  }
+
   async getAvailableFormats(videoId) {
     await this.ensureInitialized();
 
@@ -651,305 +1013,10 @@ class DownloadService {
         return { audioFormats: [], videoFormats: [] };
       }
 
-      const audioFormats = [];
-      const videoFormats = [];
-
-      // AUDIO FORMATS — prefer native .m4a (AAC) audio-only
-      const audioOnlyFormats = info.formats.filter(
-        (f) =>
-          f.acodec &&
-          f.acodec !== 'none' &&
-          (!f.vcodec || f.vcodec === 'none') &&
-          f.abr &&
-          f.ext === 'm4a'
-      );
-
-      let audioSourceFormats = audioOnlyFormats;
-      if (audioOnlyFormats.length === 0) {
-        const m4aVideoFormats = info.formats.filter(
-          (f) =>
-            f.acodec &&
-            f.acodec !== 'none' &&
-            f.vcodec &&
-            f.vcodec !== 'none' &&
-            f.ext === 'mp4'
-        );
-
-        audioSourceFormats =
-          m4aVideoFormats.length > 0
-            ? m4aVideoFormats
-            : info.formats.filter(
-                (f) =>
-                  f.acodec &&
-                  f.acodec !== 'none' &&
-                  f.vcodec &&
-                  f.vcodec !== 'none'
-              );
-      }
-
-      audioSourceFormats
-        .sort((a, b) => (a.abr || 0) - (b.abr || 0))
-        .forEach((f, index) => {
-          const bitrate = f.abr ? Math.round(f.abr) : null;
-          const codec = f.acodec || 'unknown';
-          const filesize = f.filesize || f.filesize_approx || 0;
-          const formatName = f.format_note || f.format || 'unknown';
-          const isAudioOnly = audioOnlyFormats.length > 0;
-          const bitrateDisplay = bitrate ? `${bitrate} kbps` : 'Variable';
-          const qualityNote = f.height ? ` (from ${f.height}p video)` : '';
-
-          audioFormats.push({
-            id: `audio_${f.format_id}`,
-            format: 'audioonly',
-            quality: 'highest',
-            formatId: f.format_id,
-            label: `${codec.toUpperCase()} ${bitrateDisplay}${
-              !isAudioOnly ? ' (extracted)' : ''
-            }`,
-            description: isAudioOnly
-              ? formatName
-              : `${formatName}${qualityNote} • Audio extracted from video`,
-            codec,
-            bitrate: bitrate || 'variable',
-            sampleRate: f.asr || 'unknown',
-            filesize,
-            filesizeMB: this.bytesToMB(filesize),
-            type: 'audio',
-            native: isAudioOnly,
-            qualityRank: index + 1,
-            container: f.ext || 'unknown',
-            extracted: !isAudioOnly,
-          });
-        });
-
-      // Converted formats (only if ffmpeg is available)
-      if (this.ffmpegAvailable && audioSourceFormats.length > 0) {
-        const bestAudio = audioSourceFormats[audioSourceFormats.length - 1];
-        const maxBitrate = bestAudio.abr ? Math.round(bestAudio.abr) : 128;
-
-        audioFormats.push({
-          id: 'converted_mp3',
-          format: 'audioonly_mp3',
-          quality: '0',
-          formatId: 'converted',
-          label: `MP3 ~${Math.round(maxBitrate * 0.8)} kbps`,
-          description: 'Converted from best quality',
-          codec: 'mp3',
-          bitrate: Math.round(maxBitrate * 0.8),
-          sampleRate: 'variable',
-          filesize: 0,
-          filesizeMB: '~' + this.estimateConvertedSize(maxBitrate, 'mp3'),
-          type: 'audio',
-          native: false,
-          qualityRank: audioFormats.length + 1,
-          container: 'mp3',
-          note: 'Converted - no quality gain',
-        });
-
-        if (maxBitrate >= 128) {
-          audioFormats.push({
-            id: 'converted_flac',
-            format: 'audioonly_flac',
-            quality: '0',
-            formatId: 'converted',
-            label: 'FLAC Lossless',
-            description: 'Converted from best quality',
-            codec: 'flac',
-            bitrate: 'Lossless',
-            sampleRate: 'variable',
-            filesize: 0,
-            filesizeMB: '~' + this.estimateConvertedSize(maxBitrate, 'flac'),
-            type: 'audio',
-            native: false,
-            qualityRank: audioFormats.length + 1,
-            container: 'flac',
-            note: 'Converted - larger file size',
-          });
-        }
-      }
-
-      // VIDEO FORMATS
-      const videoWithAudioFormats = info.formats.filter(
-        (f) =>
-          f.vcodec &&
-          f.vcodec !== 'none' &&
-          f.height &&
-          f.acodec &&
-          f.acodec !== 'none'
-      );
-
-      const videoOnlyFormats = info.formats.filter(
-        (f) =>
-          f.vcodec &&
-          f.vcodec !== 'none' &&
-          f.height &&
-          (!f.acodec || f.acodec === 'none')
-      );
-
-      if (videoWithAudioFormats.length > 0 || videoOnlyFormats.length > 0) {
-        videoFormats.push({
-          id: 'video_best',
-          format: 'audioandvideo',
-          quality: 'highest',
-          formatId: 'best',
-          label: 'Best Quality Available',
-          description: 'Automatically select highest quality (video + audio)',
-          resolution: 'Auto',
-          fps: 'Auto',
-          videoCodec: 'Auto',
-          audioCodec: 'Auto',
-          videoBitrate: 'Auto',
-          audioBitrate: 'Auto',
-          filesize: 0,
-          filesizeMB: 'Variable',
-          type: 'video',
-          qualityRank: 0,
-          container: 'mp4',
-          native: true,
-        });
-      }
-
-      videoWithAudioFormats
-        .sort((a, b) => (a.height || 0) - (b.height || 0))
-        .forEach((f, index) => {
-          const height = f.height || 0;
-          const width = f.width || 0;
-          const fps = f.fps || 'unknown';
-          const vcodec = f.vcodec || 'unknown';
-          const acodec = f.acodec || 'unknown';
-          const vbr = Math.round(f.vbr || 0);
-          const abr = Math.round(f.abr || 0);
-          const filesize = f.filesize || f.filesize_approx || 0;
-          const formatName = f.format_note || f.format || 'unknown';
-
-          videoFormats.push({
-            id: `video_${f.format_id}`,
-            format: 'audioandvideo',
-            quality: 'highest',
-            formatId: f.format_id,
-            label: `${height}p (Combined)`,
-            description: `${formatName} • ${fps} fps • ${vcodec.toUpperCase()}+${acodec.toUpperCase()}`,
-            resolution: `${width}x${height}`,
-            fps,
-            videoCodec: vcodec,
-            audioCodec: acodec,
-            videoBitrate: vbr,
-            audioBitrate: abr,
-            filesize,
-            filesizeMB: this.bytesToMB(filesize),
-            type: 'video',
-            qualityRank: index + 1,
-            container: f.ext || 'mp4',
-            native: true,
-            combined: true,
-          });
-        });
-
-      if (videoOnlyFormats.length > 0 && audioSourceFormats.length > 0) {
-        const bestAudio = audioSourceFormats.reduce((best, current) =>
-          (current.abr || 0) > (best.abr || 0) ? current : best
-        );
-
-        videoOnlyFormats
-          .filter((f) => f.height >= 720)
-          .sort((a, b) => (a.height || 0) - (b.height || 0))
-          .forEach((f, index) => {
-            const height = f.height || 0;
-            const width = f.width || 0;
-            const fps = f.fps || 'unknown';
-            const vcodec = f.vcodec || 'unknown';
-            const vbr = Math.round(f.vbr || 0);
-            const filesize = f.filesize || f.filesize_approx || 0;
-            const formatName = f.format_note || f.format || 'unknown';
-            const bestAudioBitrate = Math.round(bestAudio.abr || 0);
-
-            videoFormats.push({
-              id: `video_dash_${f.format_id}`,
-              format: 'audioandvideo',
-              quality: 'highest',
-              formatId: `${f.format_id}+${bestAudio.format_id}`,
-              label: `${height}p (DASH)`,
-              description: `${formatName} • ${fps} fps • ${vcodec.toUpperCase()}+${bestAudio.acodec.toUpperCase()} ${bestAudioBitrate}kbps`,
-              resolution: `${width}x${height}`,
-              fps,
-              videoCodec: vcodec,
-              audioCodec: bestAudio.acodec,
-              videoBitrate: vbr,
-              audioBitrate: bestAudioBitrate,
-              filesize,
-              filesizeMB: this.bytesToMB(filesize),
-              type: 'video',
-              qualityRank: videoFormats.length + index + 1,
-              container: 'mp4',
-              native: false,
-              dash: true,
-              note: 'High quality video + best audio combined',
-            });
-          });
-      }
-
-      // Simple formats: AV1 by resolution (or best per resolution as fallback)
-      const simpleVideoFormats = [];
-      const av1Formats = videoFormats.filter(
-        (f) => f.videoCodec && f.videoCodec.toLowerCase().includes('av01')
-      );
-
-      const resolutionMap = new Map();
-      av1Formats.forEach((format) => {
-        const height = format.resolution
-          ? parseInt(format.resolution.split('x')[1])
-          : 0;
-        if (height >= 360) {
-          const key = `${height}p`;
-          if (
-            !resolutionMap.has(key) ||
-            format.videoBitrate > (resolutionMap.get(key).videoBitrate || 0)
-          ) {
-            resolutionMap.set(key, {
-              ...format,
-              id: `simple_${format.id}`,
-              label: `${height}p (AV1)`,
-              description: `${height}p • AV1 codec • Best quality`,
-              simple: true,
-            });
-          }
-        }
-      });
-
-      Array.from(resolutionMap.values())
-        .sort((a, b) => parseInt(a.label) - parseInt(b.label))
-        .forEach((format) => simpleVideoFormats.push(format));
-
-      if (simpleVideoFormats.length === 0) {
-        const resolutionFallback = new Map();
-        videoFormats.forEach((format) => {
-          if (format.qualityRank > 0) {
-            const height = format.resolution
-              ? parseInt(format.resolution.split('x')[1])
-              : 0;
-            if (height >= 360) {
-              const key = `${height}p`;
-              if (
-                !resolutionFallback.has(key) ||
-                format.videoBitrate >
-                  (resolutionFallback.get(key).videoBitrate || 0)
-              ) {
-                resolutionFallback.set(key, {
-                  ...format,
-                  id: `simple_${format.id}`,
-                  label: `${height}p (${format.videoCodec.toUpperCase()})`,
-                  description: `${height}p • ${format.videoCodec.toUpperCase()} codec`,
-                  simple: true,
-                });
-              }
-            }
-          }
-        });
-
-        Array.from(resolutionFallback.values())
-          .sort((a, b) => parseInt(a.label) - parseInt(b.label))
-          .forEach((format) => simpleVideoFormats.push(format));
-      }
+      const { audioFormats, audioSourceFormats } = this._getAudioFormats(info.formats);
+      const { videoFormats } = this._getVideoFormats(info.formats);
+      this._getDashFormats(info.formats, videoFormats, audioSourceFormats);
+      const simpleVideoFormats = this._getSimpleFormats(videoFormats);
 
       return {
         audioFormats,

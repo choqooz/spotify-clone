@@ -1,56 +1,12 @@
 import path from 'path';
 import fs from 'fs';
 import downloadService from '../services/downloadService.js';
+import { VALID_FORMATS } from '../lib/downloadFormats.js';
 import {
   asyncHandler,
   ValidationError,
   ConflictError,
 } from '../middleware/error.middleware.js';
-
-// Queue para manejar múltiples descargas
-const downloadQueue = new Map();
-
-// Validación centralizada de formatos
-const VALID_FORMATS = {
-  song: [
-    'audioonly',
-    'audioandvideo',
-    'videoonly',
-    'audioonly_mp3',
-    'audioonly_flac',
-    'audioonly_wav',
-    'audioonly_m4a',
-    'audioonly_aac',
-    'audioonly_opus',
-    'mp3',
-    'flac',
-    'wav',
-    'm4a',
-    'aac',
-    'opus',
-    'mp4',
-    'webm',
-  ],
-  album: [
-    'audioonly',
-    'audioonly_mp3',
-    'audioonly_flac',
-    'audioonly_wav',
-    'audioonly_m4a',
-    'audioonly_aac',
-    'audioonly_opus',
-    'mp3',
-    'flac',
-    'wav',
-    'm4a',
-    'aac',
-    'opus',
-  ],
-};
-
-const validateFormat = (format, type) => {
-  return VALID_FORMATS[type].includes(format);
-};
 
 const createDownloadKey = (type, id, format, quality) => {
   return `${type}_${id}_${format}_${quality}`;
@@ -68,26 +24,24 @@ export const downloadSong = asyncHandler(async (req, res) => {
     throw new ValidationError('videoId is required');
   }
 
-  if (!validateFormat(format, 'song')) {
-    throw new ValidationError(
-      `Invalid format. Valid formats: ${VALID_FORMATS.song.join(', ')}`
-    );
+  try {
+    downloadService.validateFormat(format, 'song');
+  } catch (err) {
+    throw new ValidationError(err.message);
   }
 
   const downloadKey = createDownloadKey('song', videoId, format, quality);
-  if (downloadQueue.has(downloadKey)) {
+  if (downloadService.getDownloadStatus(downloadKey)) {
     throw new ConflictError('Download already in progress');
   }
 
-  downloadQueue.set(downloadKey, {
+  downloadService.trackDownload(downloadKey, {
     type: 'song',
     videoId,
     format,
     quality,
     formatId,
-    startTime: new Date(),
   });
-
 
   try {
     const result = await downloadService.downloadSong(videoId, {
@@ -105,7 +59,7 @@ export const downloadSong = asyncHandler(async (req, res) => {
       },
     });
 
-    downloadQueue.delete(downloadKey);
+    downloadService.untrackDownload(downloadKey);
 
     if (req.io) {
       req.io.emit(`download-complete-${videoId}`, {
@@ -121,7 +75,7 @@ export const downloadSong = asyncHandler(async (req, res) => {
       data: result,
     });
   } catch (downloadError) {
-    downloadQueue.delete(downloadKey);
+    downloadService.untrackDownload(downloadKey);
     throw downloadError;
   }
 });
@@ -133,27 +87,23 @@ export const downloadAlbum = asyncHandler(async (req, res) => {
     throw new ValidationError('albumId is required');
   }
 
-  if (!validateFormat(format, 'album')) {
-    throw new ValidationError(
-      `Invalid format for album. Valid formats: ${VALID_FORMATS.album.join(
-        ', '
-      )}`
-    );
+  try {
+    downloadService.validateFormat(format, 'album');
+  } catch (err) {
+    throw new ValidationError(err.message);
   }
 
   const downloadKey = createDownloadKey('album', albumId, format, quality);
-  if (downloadQueue.has(downloadKey)) {
+  if (downloadService.getDownloadStatus(downloadKey)) {
     throw new ConflictError('Album download already in progress');
   }
 
-  downloadQueue.set(downloadKey, {
+  downloadService.trackDownload(downloadKey, {
     type: 'album',
     albumId,
     format,
     quality,
-    startTime: new Date(),
   });
-
 
   try {
     const result = await downloadService.downloadAlbum(albumId, {
@@ -170,7 +120,7 @@ export const downloadAlbum = asyncHandler(async (req, res) => {
       },
     });
 
-    downloadQueue.delete(downloadKey);
+    downloadService.untrackDownload(downloadKey);
 
     if (req.io) {
       req.io.emit(`album-complete-${albumId}`, {
@@ -186,7 +136,7 @@ export const downloadAlbum = asyncHandler(async (req, res) => {
       data: result,
     });
   } catch (downloadError) {
-    downloadQueue.delete(downloadKey);
+    downloadService.untrackDownload(downloadKey);
     throw downloadError;
   }
 });
@@ -220,7 +170,7 @@ export const getDownloadStatus = asyncHandler(async (req, res) => {
     throw new ValidationError('downloadKey is required');
   }
 
-  const status = downloadQueue.get(downloadKey);
+  const status = downloadService.getDownloadStatus(downloadKey);
   if (!status) {
     return res.json({
       success: true,
@@ -238,13 +188,10 @@ export const getDownloadStatus = asyncHandler(async (req, res) => {
 });
 
 export const getActiveDownloads = asyncHandler(async (req, res) => {
-  const activeDownloads = Array.from(downloadQueue.entries()).map(
-    ([key, value]) => ({
-      downloadKey: key,
-      ...value,
-      duration: Date.now() - value.startTime.getTime(),
-    })
-  );
+  const activeDownloads = downloadService.getActiveDownloads().map((entry) => ({
+    ...entry,
+    duration: Date.now() - entry.startTime.getTime(),
+  }));
 
   res.json({ success: true, activeDownloads, count: activeDownloads.length });
 });
@@ -256,9 +203,7 @@ export const cancelDownload = asyncHandler(async (req, res) => {
     throw new ValidationError('downloadKey is required');
   }
 
-  const wasActive = downloadQueue.has(downloadKey);
-  downloadQueue.delete(downloadKey);
-  downloadService.killDownload(downloadKey);
+  const wasActive = downloadService.cancelDownload(downloadKey);
 
   res.json({
     success: true,
