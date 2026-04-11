@@ -1,3 +1,5 @@
+import { logger } from '../lib/logger.js';
+
 // Custom error classes
 export class AppError extends Error {
   constructor(message, statusCode, isOperational = true) {
@@ -46,7 +48,7 @@ export const errorHandler = (err, req, res, next) => {
   error.message = err.message;
 
   // Log error for debugging
-  console.error('Error details:', {
+  logger.error('Error details:', {
     message: err.message,
     stack: err.stack,
     url: req.url,

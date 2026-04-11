@@ -1,4 +1,3 @@
-import { spawn } from 'child_process';
 import path from 'path';
 import fs from 'fs';
 import downloadService from '../services/downloadService.js';
@@ -331,26 +330,4 @@ export const serveFile = asyncHandler(async (req, res) => {
   stream.pipe(res);
 });
 
-const spawnCheck = (cmd, args) =>
-  new Promise((resolve) => {
-    const proc = spawn(cmd, args);
-    proc.on('close', (code) => resolve(code === 0));
-    proc.on('error', () => resolve(false));
-  });
 
-export const downloadHealthCheck = asyncHandler(async (req, res) => {
-  const [ytdlpInstalled, ffmpegAvailable] = await Promise.all([
-    spawnCheck('yt-dlp', ['--version']),
-    spawnCheck('ffmpeg', ['-version']),
-  ]);
-
-  res.json({
-    success: true,
-    status: ytdlpInstalled && ffmpegAvailable ? 'healthy' : 'degraded',
-    ytdlpInstalled,
-    ffmpegAvailable,
-    activeDownloads: downloadQueue.size,
-    warnings: !ffmpegAvailable ? ['FFmpeg not found - audio conversion may fail'] : [],
-    timestamp: new Date().toISOString(),
-  });
-});

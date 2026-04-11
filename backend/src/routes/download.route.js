@@ -8,7 +8,6 @@ import {
   getActiveDownloads,
   cancelDownload,
   cleanupFiles,
-  downloadHealthCheck,
   getStreamingUrl,
   serveFile,
 } from '../controller/download.controller.js';
@@ -32,8 +31,5 @@ router.get('/active', getActiveDownloads);
 // Routes para gestión
 router.delete('/cancel/:downloadKey', cancelDownload);
 router.post('/cleanup', cleanupFiles);
-
-// Health check
-router.get('/health', downloadHealthCheck);
 
 export default router;

@@ -269,50 +269,6 @@ class DownloadService {
     }
   }
 
-  // Run a download with live progress parsing from yt-dlp stderr
-  async _download(url, args, onProgress, downloadKey) {
-    const cookiesArgs = await this._cookiesArgs();
-    return new Promise((resolve, reject) => {
-      const allArgs = [...cookiesArgs, ...this._ytDownloadArgs(), '--no-check-formats', ...args, '--progress', '--newline', '--no-warnings', url];
-      const proc = spawn('yt-dlp', allArgs);
-      if (downloadKey) this._activeProcs.set(downloadKey, proc);
-      let stderr = '';
-
-      proc.stdout.on('data', () => {}); // stdout not needed during download
-
-      proc.stderr.on('data', (chunk) => {
-        const text = chunk.toString();
-        stderr += text;
-
-        // Parse yt-dlp progress lines, e.g.:
-        // [download]  25.2% of ~  4.30MiB at    3.52MiB/s ETA 00:00
-        for (const line of text.split('\n')) {
-          const match = line.match(
-            /\[download\]\s+([\d.]+)%\s+of\s+([\d.~]+\s*\S+)\s+at\s+([\d.]+\s*\S+\/s)(?:\s+ETA\s+(\S+))?/
-          );
-          if (match) {
-            onProgress?.({
-              percent: parseFloat(match[1]),
-              size: match[2].trim(),
-              speed: match[3].trim(),
-              eta: match[4]?.trim() ?? 'unknown',
-            });
-          }
-        }
-      });
-
-      proc.on('close', (code) => {
-        if (downloadKey) this._activeProcs.delete(downloadKey);
-        if (code === 0 || code === null) resolve(); // null = killed intentionally
-        else reject(new Error(stderr.trim() || `yt-dlp exited with code ${code}`));
-      });
-      proc.on('error', (err) => {
-        if (downloadKey) this._activeProcs.delete(downloadKey);
-        reject(err);
-      });
-    });
-  }
-
   /** Kill the active download for the given key (yt-dlp proc or Innertube stream). */
   killDownload(downloadKey) {
     let killed = false;
@@ -611,58 +567,6 @@ class DownloadService {
       filename: path.basename(finalFile),
       info,
     };
-  }
-
-  // Translate our format/quality options to yt-dlp CLI format strings + extra args
-  _buildCliFormat(format, quality, formatId) {
-    // Specific format ID chosen by the user (from getAvailableFormats).
-    // Add generic fallbacks because Innertube format IDs (itag numbers) may not
-    // be available to yt-dlp which uses different player clients on datacenter IPs.
-    if (formatId && formatId !== 'best' && formatId !== 'converted') {
-      const fallback = formatId.includes('+')
-        ? `${formatId}/bestvideo+bestaudio/best`
-        : `${formatId}/bestaudio/best`;
-      return { formatStr: fallback, extraArgs: [] };
-    }
-
-    switch (format) {
-      case 'audioonly':
-        return { formatStr: 'bestaudio[ext=m4a]/bestaudio', extraArgs: [] };
-
-      case 'audioonly_mp3':
-        return {
-          formatStr: 'bestaudio',
-          extraArgs: ['-x', '--audio-format', 'mp3', '--audio-quality', '0'],
-        };
-
-      case 'audioonly_flac':
-        return {
-          formatStr: 'bestaudio',
-          extraArgs: ['-x', '--audio-format', 'flac'],
-        };
-
-      case 'audioonly_aac':
-        return {
-          formatStr: 'bestaudio[ext=m4a]/bestaudio',
-          extraArgs: ['-x', '--audio-format', 'aac'],
-        };
-
-      case 'audioandvideo':
-        return {
-          formatStr:
-            'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
-          extraArgs: ['--merge-output-format', 'mp4'],
-        };
-
-      case 'videoonly':
-        return {
-          formatStr: 'bestvideo[ext=mp4]/bestvideo',
-          extraArgs: ['--merge-output-format', 'mp4'],
-        };
-
-      default:
-        return { formatStr: 'bestaudio[ext=m4a]/bestaudio', extraArgs: [] };
-    }
   }
 
   // ── Public API ────────────────────────────────────────────────────────────────
@@ -1273,25 +1177,6 @@ class DownloadService {
   }
 
   // ── Format helpers ────────────────────────────────────────────────────────────
-
-  getFormatConfig(format, quality) {
-    switch (format) {
-      case 'audioonly':
-        return { filter: 'audioonly', quality: quality === 'highest' ? 'highest' : 'lowest' };
-      case 'audioonly_mp3':
-        return { filter: 'audioonly', type: 'mp3', quality: parseInt(quality) || 0 };
-      case 'audioonly_flac':
-        return { filter: 'audioonly', type: 'flac', quality: parseInt(quality) || 0 };
-      case 'audioonly_aac':
-        return { filter: 'audioonly', type: 'aac', quality: parseInt(quality) || 0 };
-      case 'audioandvideo':
-        return { filter: 'audioandvideo', quality: quality === 'highest' ? 'highest' : 'lowest', type: 'mp4' };
-      case 'videoonly':
-        return { filter: 'videoonly', quality: quality || 'highest', type: 'mp4' };
-      default:
-        return { filter: 'audioonly', quality: 'highest' };
-    }
-  }
 
   getFormatName(formatConfig) {
     if (formatConfig.filter === 'audioonly') return formatConfig.type || 'audio';
