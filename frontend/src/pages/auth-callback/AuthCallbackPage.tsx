@@ -24,8 +24,8 @@ export const AuthCallbackPage = () => {
           imageUrl: user.imageUrl,
           email: user.primaryEmailAddress?.emailAddress,
         });
-      } catch (error) {
-        console.log('Error in auth callback', error);
+      } catch {
+        // Auth callback failed — navigate home anyway (handled in finally)
       } finally {
         navigate('/');
       }

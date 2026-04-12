@@ -2,7 +2,7 @@ import { axiosInstance } from '@/lib/axios';
 import { useAuthStore } from '@/stores/useAuthStore';
 import { useChatStore } from '@/stores/useChatStore';
 import { useFavoriteStore } from '@/stores/useFavoriteStore';
-import { useDownloadStore } from '@/stores/useDownloadStore';
+import { useDownloadSocketStore } from '@/stores/useDownloadSocketStore';
 import { useAuth } from '@clerk/clerk-react';
 import { Loader } from 'lucide-react';
 import { useEffect, useState } from 'react';
@@ -20,7 +20,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const { checkAdminStatus } = useAuthStore(useShallow((s) => ({ checkAdminStatus: s.checkAdminStatus })));
   const { initSocket, disconnectSocket } = useChatStore(useShallow((s) => ({ initSocket: s.initSocket, disconnectSocket: s.disconnectSocket })));
   const { fetchFavorites } = useFavoriteStore(useShallow((s) => ({ fetchFavorites: s.fetchFavorites })));
-  const { initializeSocket: initDownloadSocket, disconnectSocket: disconnectDownloadSocket } = useDownloadStore(
+  const { initializeSocket: initDownloadSocket, disconnectSocket: disconnectDownloadSocket } = useDownloadSocketStore(
     useShallow((s) => ({ initializeSocket: s.initializeSocket, disconnectSocket: s.disconnectSocket }))
   );
 

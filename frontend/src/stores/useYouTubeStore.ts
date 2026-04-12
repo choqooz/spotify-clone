@@ -118,10 +118,9 @@ export const useYouTubeStore = create<YouTubeStore>((set) => ({
       } else {
         throw new Error(response.data.error || 'Failed to get suggestions');
       }
-    } catch (error) {
+    } catch {
       set({ isLoadingSuggestions: false });
-      // No mostrar error para sugerencias, solo fallar silenciosamente
-      console.error('Error getting search suggestions:', error);
+      // Suggestions are non-critical — fail silently
     }
   },
 

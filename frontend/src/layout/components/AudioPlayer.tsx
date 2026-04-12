@@ -68,8 +68,8 @@ export const AudioPlayer = () => {
       ) {
         method();
       }
-    } catch (error) {
-      console.debug('YouTube API call failed:', error);
+    } catch {
+      // YouTube API not ready yet — swallow silently
     }
   };
 
@@ -170,10 +170,6 @@ export const AudioPlayer = () => {
 
   const onYouTubeError = (event: YouTubeEvent<number>) => {
     const errorCode = event.data;
-    console.error('YouTube player error - Code:', errorCode);
-    console.error('Current video ID:', currentSong?.videoId);
-    console.error('Current hostname:', window.location.hostname);
-    console.error('YouTube opts used:', youtubeOpts);
 
     // YouTube error codes:
     // 2 - Invalid video ID
@@ -199,7 +195,9 @@ export const AudioPlayer = () => {
         break;
     }
 
-    console.error('Error message:', errorMessage);
+    if (import.meta.env.DEV) {
+      console.error('YouTube player error', { code: errorCode, videoId: currentSong?.videoId, message: errorMessage });
+    }
   };
 
   const onYouTubeStateChange = (event: YouTubeEvent<number>) => {

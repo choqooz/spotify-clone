@@ -201,8 +201,8 @@ export function QualityDropdown({
       };
       if (artist) options.artist = artist;
       await downloadSong(videoId, title, options);
-    } catch (error) {
-      console.error('Direct download failed:', error);
+    } catch {
+      // Error already handled via toast inside downloadSong()
     } finally {
       setIsDirectDownloading(false);
     }
@@ -250,8 +250,8 @@ export function QualityDropdown({
         await downloadSong(videoId, title, options);
       }
       setIsOpen(false);
-    } catch (error) {
-      console.error('Download failed:', error);
+    } catch {
+      // Error already handled via toast inside downloadSong()
     }
   };
 

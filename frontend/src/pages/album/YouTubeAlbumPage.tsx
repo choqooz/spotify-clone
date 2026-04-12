@@ -94,8 +94,7 @@ export const YouTubeAlbumPage = () => {
         await navigator.clipboard.writeText(shareUrl);
         toast.success('Album link copied to clipboard!');
       }
-    } catch (error) {
-      console.error('Error sharing:', error);
+    } catch {
       toast.error('Could not share album');
     }
   };

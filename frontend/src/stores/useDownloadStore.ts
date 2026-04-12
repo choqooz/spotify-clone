@@ -2,9 +2,8 @@ import { create } from 'zustand';
 import { axiosInstance } from '@/lib/axios';
 import { getApiError } from '@/lib/apiError';
 import { toast } from 'react-hot-toast';
-import { io, Socket } from 'socket.io-client';
 
-// Types
+// ── Types ─────────────────────────────────────────────────────────────────────
 
 interface AlbumDownloadProgress {
   currentSong: number;
@@ -120,23 +119,21 @@ interface AvailableFormats {
   advancedVideoFormats?: FormatOption[];
 }
 
+// ── Store interface ───────────────────────────────────────────────────────────
+
 interface DownloadStore {
   // State
   activeDownloads: Map<string, ActiveDownload>;
   downloadHistory: (DownloadResult | AlbumDownloadResult)[];
-  isConnected: boolean;
-  socket: Socket | null;
 
-  // Download Options
+  // Download options
   selectedFormat: string;
   selectedQuality: string | number;
   availableFormats: AvailableFormats | null;
   formatsVideoId: string | null;
   isLoadingFormats: boolean;
 
-  // Actions
-  initializeSocket: (token: string) => void;
-  disconnectSocket: () => void;
+  // Public actions
   downloadSong: (
     videoId: string,
     title: string,
@@ -161,231 +158,150 @@ interface DownloadStore {
   getVideoInfo: (videoId: string) => Promise<VideoInfo>;
   getAvailableFormats: (videoId: string) => Promise<void>;
   clearAvailableFormats: () => void;
+
+  // Socket event handlers (called by useDownloadSocketStore)
+  handleSocketProgress: (videoId: string, data: { percent?: number; qualityInfo?: unknown }) => void;
+  handleSocketAlbumProgress: (albumId: string, data: { overallProgress?: number }) => void;
+  handleSocketComplete: (videoId: string, data: { filename?: string; [key: string]: unknown }) => void;
+  handleSocketAlbumComplete: (albumId: string, data: Record<string, unknown>) => void;
+  handleSocketError: (id: string, data: { error?: string }) => void;
 }
+
+// ── Store ─────────────────────────────────────────────────────────────────────
 
 export const useDownloadStore = create<DownloadStore>((set, get) => ({
   // Initial State
   activeDownloads: new Map(),
   downloadHistory: [],
-  isConnected: false,
-  socket: null,
   selectedFormat: 'audioonly',
   selectedQuality: 'highest',
   availableFormats: null,
   formatsVideoId: null,
   isLoadingFormats: false,
 
-  initializeSocket: (token: string) => {
-    const existing = get().socket;
-    if (existing?.connected) return; // already connected, reuse
+  // ── Socket event handlers ─────────────────────────────────────────────────
 
-    const getBaseURL = () => {
-      if (import.meta.env.MODE === 'development') {
-        const host = window.location.hostname;
-        const port = import.meta.env.VITE_API_PORT ?? '5000';
-        return `http://${host}:${port}`;
+  handleSocketProgress: (videoId, data) => {
+    set((state) => {
+      const downloads = new Map(state.activeDownloads);
+      const existing = downloads.get(videoId);
+      if (existing) {
+        downloads.set(videoId, {
+          ...existing,
+          progress: (data.percent as number) || 0,
+          status: 'downloading',
+          qualityInfo: (data.qualityInfo as QualityInfo) || existing.qualityInfo,
+        });
       }
-      return '/';
-    };
-
-    const socket = io(getBaseURL(), {
-      auth: { token },
-      autoConnect: true,
-      withCredentials: true,
+      return { activeDownloads: downloads };
     });
-
-    socket.on('connect', () => set({ isConnected: true }));
-    socket.on('disconnect', () => set({ isConnected: false }));
-    socket.on('connect_error', (err) => console.error('Download socket error:', err.message));
-
-    socket.onAny((eventName: string, data: any) => {
-      if (eventName.startsWith('download-progress-')) {
-        const videoId = eventName.replace('download-progress-', '');
-
-        set((state) => {
-          const downloads = new Map(state.activeDownloads);
-          const existing = downloads.get(videoId);
-
-          if (existing) {
-            downloads.set(videoId, {
-              ...existing,
-              progress: data.percent || 0,
-              status: 'downloading',
-              qualityInfo: data.qualityInfo || existing.qualityInfo,
-            });
-          }
-
-          return { activeDownloads: downloads };
-        });
-      }
-
-      // Progreso de álbumes
-      else if (eventName.startsWith('album-progress-')) {
-        const albumId = eventName.replace('album-progress-', '');
-
-        set((state) => {
-          const downloads = new Map(state.activeDownloads);
-          const existing = downloads.get(albumId);
-
-          if (existing) {
-            downloads.set(albumId, {
-              ...existing,
-              progress: data.overallProgress || 0,
-              status: 'downloading',
-              albumProgress: data,
-            });
-          }
-
-          return { activeDownloads: downloads };
-        });
-      }
-
-      // Completado de canciones
-      else if (eventName.startsWith('download-complete-')) {
-        const videoId = eventName.replace('download-complete-', '');
-
-        set((state) => {
-          const downloads = new Map(state.activeDownloads);
-          const existing = downloads.get(videoId);
-
-          if (existing) {
-            downloads.set(videoId, {
-              ...existing,
-              progress: 100,
-              status: 'completed',
-              result: data,
-            });
-
-            // Trigger browser file download via fetch (includes Authorization header,
-            // avoids Clerk handshake redirect that breaks anchor-tag downloads)
-            if (data?.filename) {
-              const origin = (axiosInstance.defaults.baseURL ?? '').replace(/\/api$/, '');
-              const url = `${origin}/api/download/file/${encodeURIComponent(data.filename)}`;
-              const authHeader = axiosInstance.defaults.headers.common['Authorization'] as string | undefined;
-
-              fetch(url, { headers: authHeader ? { Authorization: authHeader } : {} })
-                .then((res) => {
-                  if (!res.ok) throw new Error(`Server returned ${res.status}`);
-                  return res.blob();
-                })
-                .then((blob) => {
-                  const blobUrl = URL.createObjectURL(blob);
-                  const a = document.createElement('a');
-                  a.href = blobUrl;
-                  a.download = data.filename;
-                  document.body.appendChild(a);
-                  a.click();
-                  document.body.removeChild(a);
-                  URL.revokeObjectURL(blobUrl);
-                })
-                .catch((err) => console.error('File download failed:', err));
-            }
-
-            // Mover a historial después de unos segundos
-            setTimeout(() => {
-              set((state) => {
-                const newDownloads = new Map(state.activeDownloads);
-                const completed = newDownloads.get(videoId);
-                newDownloads.delete(videoId);
-
-                return {
-                  activeDownloads: newDownloads,
-                  downloadHistory: completed?.result
-                    ? [completed.result, ...state.downloadHistory]
-                    : state.downloadHistory,
-                };
-              });
-            }, 3000);
-          }
-
-          return { activeDownloads: downloads };
-        });
-      }
-
-      // Completado de álbumes
-      else if (eventName.startsWith('album-complete-')) {
-        const albumId = eventName.replace('album-complete-', '');
-
-        set((state) => {
-          const downloads = new Map(state.activeDownloads);
-          const existing = downloads.get(albumId);
-
-          if (existing) {
-            downloads.set(albumId, {
-              ...existing,
-              progress: 100,
-              status: 'completed',
-              result: data,
-            });
-
-            // Mover a historial después de unos segundos
-            setTimeout(() => {
-              set((state) => {
-                const newDownloads = new Map(state.activeDownloads);
-                const completed = newDownloads.get(albumId);
-                newDownloads.delete(albumId);
-
-                return {
-                  activeDownloads: newDownloads,
-                  downloadHistory: completed?.result
-                    ? [completed.result, ...state.downloadHistory]
-                    : state.downloadHistory,
-                };
-              });
-            }, 5000);
-          }
-
-          return { activeDownloads: downloads };
-        });
-      }
-
-      // Errores
-      else if (
-        eventName.startsWith('download-error-') ||
-        eventName.startsWith('album-error-')
-      ) {
-        const id = eventName.includes('download-error-')
-          ? eventName.replace('download-error-', '')
-          : eventName.replace('album-error-', '');
-
-        set((state) => {
-          const downloads = new Map(state.activeDownloads);
-          const existing = downloads.get(id);
-
-          if (existing) {
-            downloads.set(id, {
-              ...existing,
-              status: 'error',
-              error: data.error,
-            });
-
-            // Quitar después de unos segundos
-            setTimeout(() => {
-              set((state) => {
-                const newDownloads = new Map(state.activeDownloads);
-                newDownloads.delete(id);
-                return { activeDownloads: newDownloads };
-              });
-            }, 5000);
-          }
-
-          return { activeDownloads: downloads };
-        });
-      }
-    });
-
-    set({ socket });
   },
 
-  disconnectSocket: () => {
-    const { socket } = get();
-    if (socket) {
-      socket.disconnect();
-      set({ socket: null, isConnected: false });
-    }
+  handleSocketAlbumProgress: (albumId, data) => {
+    set((state) => {
+      const downloads = new Map(state.activeDownloads);
+      const existing = downloads.get(albumId);
+      if (existing) {
+        downloads.set(albumId, {
+          ...existing,
+          progress: (data as AlbumDownloadProgress).overallProgress || 0,
+          status: 'downloading',
+          albumProgress: data as AlbumDownloadProgress,
+        });
+      }
+      return { activeDownloads: downloads };
+    });
   },
 
-  downloadSong: async (videoId: string, title: string, options = {}) => {
+  handleSocketComplete: (videoId, data) => {
+    set((state) => {
+      const downloads = new Map(state.activeDownloads);
+      const existing = downloads.get(videoId);
+      if (existing) {
+        downloads.set(videoId, {
+          ...existing,
+          progress: 100,
+          status: 'completed',
+          result: data as unknown as DownloadResult,
+        });
+
+        // Move to history after a short delay
+        setTimeout(() => {
+          set((s) => {
+            const newDownloads = new Map(s.activeDownloads);
+            const completed = newDownloads.get(videoId);
+            newDownloads.delete(videoId);
+            return {
+              activeDownloads: newDownloads,
+              downloadHistory: completed?.result
+                ? [completed.result, ...s.downloadHistory]
+                : s.downloadHistory,
+            };
+          });
+        }, 3000);
+      }
+      return { activeDownloads: downloads };
+    });
+  },
+
+  handleSocketAlbumComplete: (albumId, data) => {
+    set((state) => {
+      const downloads = new Map(state.activeDownloads);
+      const existing = downloads.get(albumId);
+      if (existing) {
+        downloads.set(albumId, {
+          ...existing,
+          progress: 100,
+          status: 'completed',
+          result: data as unknown as AlbumDownloadResult,
+        });
+
+        // Move to history after a short delay
+        setTimeout(() => {
+          set((s) => {
+            const newDownloads = new Map(s.activeDownloads);
+            const completed = newDownloads.get(albumId);
+            newDownloads.delete(albumId);
+            return {
+              activeDownloads: newDownloads,
+              downloadHistory: completed?.result
+                ? [completed.result, ...s.downloadHistory]
+                : s.downloadHistory,
+            };
+          });
+        }, 5000);
+      }
+      return { activeDownloads: downloads };
+    });
+  },
+
+  handleSocketError: (id, data) => {
+    set((state) => {
+      const downloads = new Map(state.activeDownloads);
+      const existing = downloads.get(id);
+      if (existing) {
+        downloads.set(id, {
+          ...existing,
+          status: 'error',
+          error: data.error,
+        });
+
+        // Remove after a short delay
+        setTimeout(() => {
+          set((s) => {
+            const newDownloads = new Map(s.activeDownloads);
+            newDownloads.delete(id);
+            return { activeDownloads: newDownloads };
+          });
+        }, 5000);
+      }
+      return { activeDownloads: downloads };
+    });
+  },
+
+  // ── Download actions ──────────────────────────────────────────────────────
+
+  downloadSong: async (videoId, title, options = {}) => {
     const { selectedFormat, selectedQuality } = get();
     const format = options.format || selectedFormat;
     const quality = options.quality || selectedQuality;
@@ -394,7 +310,7 @@ export const useDownloadStore = create<DownloadStore>((set, get) => ({
     const fileSize = options.fileSize;
 
     try {
-      // Agregar a descargas activas
+      // Add to active downloads
       set((state) => {
         const downloads = new Map(state.activeDownloads);
         downloads.set(videoId, {
@@ -412,7 +328,6 @@ export const useDownloadStore = create<DownloadStore>((set, get) => ({
         return { activeDownloads: downloads };
       });
 
-      // Crear notificación personalizada más rica
       const displayTitle = artist ? `${artist} - ${title}` : title;
       const sizeInfo = fileSize ? `\n📦 ${fileSize} MB` : '';
 
@@ -466,7 +381,9 @@ export const useDownloadStore = create<DownloadStore>((set, get) => ({
           const downloads = new Map(state.activeDownloads);
           const item = downloads.get(videoId);
           downloads.delete(videoId);
-          const historyEntry = result ?? (item ? { videoId, title: item.title, format: item.format, quality: item.quality, filename: '', duration: 0, size: 0, success: true } : null);
+          const historyEntry = result ?? (item
+            ? { videoId, title: item.title, format: item.format, quality: item.quality, filename: '', duration: 0, size: 0, success: true }
+            : null);
           return {
             activeDownloads: downloads,
             downloadHistory: historyEntry ? [historyEntry, ...state.downloadHistory] : state.downloadHistory,
@@ -493,7 +410,9 @@ export const useDownloadStore = create<DownloadStore>((set, get) => ({
             document.body.removeChild(a);
             URL.revokeObjectURL(blobUrl);
           })
-          .catch((err) => console.error('File download failed:', err));
+          .catch(() => {
+            // File download failure is non-fatal — download was saved server-side
+          });
       }
     } catch (error) {
       set((state) => {
@@ -502,26 +421,24 @@ export const useDownloadStore = create<DownloadStore>((set, get) => ({
         return { activeDownloads: downloads };
       });
 
-      const message =
-        getApiError(error) ?? 'Download failed';
+      const message = getApiError(error) ?? 'Download failed';
       toast.error(`❌ Download failed: ${message}`);
-      console.error('Download song error:', error);
     }
   },
 
-  downloadAlbum: async (albumId: string, title: string, options = {}) => {
+  downloadAlbum: async (albumId, title, options = {}) => {
     const { selectedFormat, selectedQuality } = get();
     const format = options.format || selectedFormat;
     const quality = options.quality || selectedQuality;
 
-    // Solo formatos de audio para álbumes
+    // Only audio formats for albums
     if (['mp4', 'webm'].includes(format)) {
       toast.error('Video formats not supported for album downloads');
       return;
     }
 
     try {
-      // Agregar a descargas activas
+      // Add to active downloads
       set((state) => {
         const downloads = new Map(state.activeDownloads);
         downloads.set(albumId, {
@@ -537,15 +454,9 @@ export const useDownloadStore = create<DownloadStore>((set, get) => ({
         return { activeDownloads: downloads };
       });
 
-      toast.success(
-        `💿 Starting album download: ${title} (${format.toUpperCase()})`
-      );
+      toast.success(`💿 Starting album download: ${title} (${format.toUpperCase()})`);
 
-      const response = await axiosInstance.post('/download/album', {
-        albumId,
-        format,
-        quality,
-      });
+      const response = await axiosInstance.post('/download/album', { albumId, format, quality });
       const result = response.data?.data;
 
       // Mark as completed immediately
@@ -577,16 +488,13 @@ export const useDownloadStore = create<DownloadStore>((set, get) => ({
         return { activeDownloads: downloads };
       });
 
-      const message =
-        getApiError(error) ?? 'Album download failed';
+      const message = getApiError(error) ?? 'Album download failed';
       toast.error(`❌ Album download failed: ${message}`);
-      console.error('Download album error:', error);
     }
   },
 
-  cancelDownload: async (downloadId: string) => {
+  cancelDownload: async (downloadId) => {
     try {
-      // Buscar en descargas activas para crear la downloadKey
       const { activeDownloads } = get();
       const download = activeDownloads.get(downloadId);
 
@@ -596,10 +504,8 @@ export const useDownloadStore = create<DownloadStore>((set, get) => ({
       }
 
       const downloadKey = `${download.type}_${downloadId}_${download.format}_${download.quality}`;
-
       await axiosInstance.delete(`/download/cancel/${downloadKey}`);
 
-      // Remover de descargas activas
       set((state) => {
         const downloads = new Map(state.activeDownloads);
         downloads.delete(downloadId);
@@ -608,38 +514,27 @@ export const useDownloadStore = create<DownloadStore>((set, get) => ({
 
       toast.success(`🚫 Download cancelled: ${download.title}`);
     } catch (error) {
-      const message =
-        getApiError(error) ?? 'Cancel failed';
+      const message = getApiError(error) ?? 'Cancel failed';
       toast.error(`❌ Cancel failed: ${message}`);
-      console.error('Cancel download error:', error);
     }
   },
 
-  getVideoInfo: async (videoId: string) => {
+  getVideoInfo: async (videoId) => {
     try {
       const response = await axiosInstance.get(`/download/info/${videoId}`);
       return response.data.data;
     } catch (error) {
-      const message =
-        getApiError(error) ?? 'Failed to get video info';
+      const message = getApiError(error) ?? 'Failed to get video info';
       toast.error(`❌ ${message}`);
       throw error;
     }
   },
 
-  setFormat: (format: string) => {
-    set({ selectedFormat: format });
-  },
+  setFormat: (format) => set({ selectedFormat: format }),
+  setQuality: (quality) => set({ selectedQuality: quality }),
+  clearHistory: () => set({ downloadHistory: [] }),
 
-  setQuality: (quality: string | number) => {
-    set({ selectedQuality: quality });
-  },
-
-  clearHistory: () => {
-    set({ downloadHistory: [] });
-  },
-
-  removeFromHistory: (id: string) => {
+  removeFromHistory: (id) => {
     set((state) => ({
       downloadHistory: state.downloadHistory.filter(
         (item) => ('videoId' in item ? item.videoId : item.albumId) !== id
@@ -647,26 +542,15 @@ export const useDownloadStore = create<DownloadStore>((set, get) => ({
     }));
   },
 
-  getAvailableFormats: async (videoId: string) => {
+  getAvailableFormats: async (videoId) => {
     set({ isLoadingFormats: true, formatsVideoId: videoId });
-
     try {
       const response = await axiosInstance.get(`/download/formats/${videoId}`);
-      set({
-        availableFormats: response.data.data,
-        isLoadingFormats: false,
-      });
-    } catch (error) {
-      console.error('Error getting available formats:', error);
-      set({
-        availableFormats: null,
-        formatsVideoId: null,
-        isLoadingFormats: false,
-      });
+      set({ availableFormats: response.data.data, isLoadingFormats: false });
+    } catch {
+      set({ availableFormats: null, formatsVideoId: null, isLoadingFormats: false });
     }
   },
 
-  clearAvailableFormats: () => {
-    set({ availableFormats: null, formatsVideoId: null });
-  },
+  clearAvailableFormats: () => set({ availableFormats: null, formatsVideoId: null }),
 }));
