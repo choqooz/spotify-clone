@@ -5,6 +5,21 @@ import { logger } from './logger.js';
 
 const IDLE_ACTIVITY = 'Idle';
 
+/**
+ * Safely emit a Socket.IO event. The socket may be closed/invalid by the time
+ * the handler runs — swallow the error so it never crashes the caller.
+ * @param {import('socket.io').Server | import('socket.io').Socket} io
+ * @param {string} event
+ * @param {unknown} data
+ */
+export const safeEmit = (io, event, data) => {
+  try {
+    io.emit(event, data);
+  } catch (err) {
+    logger.warn({ err }, 'Failed to emit socket event');
+  }
+};
+
 export const initializeSocket = (server) => {
   const allowedOrigins = process.env.ALLOWED_ORIGINS
     ? process.env.ALLOWED_ORIGINS.split(',').map((o) => o.trim())

@@ -1,4 +1,5 @@
 import { logger } from '../lib/logger.js';
+import { safeEmit } from '../lib/socket.js';
 
 // Custom error classes
 export class AppError extends Error {
@@ -115,33 +116,24 @@ export const errorHandler = (err, req, res, next) => {
   }
 
   // Handle WebSocket emissions for download errors.
-  // Wrapped in try-catch — socket may be closed/invalid and must not crash the error handler.
   if (req.io) {
     const videoId = req.body?.videoId || req.params?.videoId;
     const albumId = req.body?.albumId || req.params?.albumId;
 
     if (videoId) {
-      try {
-        req.io.emit(`download-error-${videoId}`, {
-          type: 'song',
-          error: error.message,
-          statusCode: error.statusCode,
-        });
-      } catch (emitErr) {
-        logger.warn({ err: emitErr }, 'Failed to emit socket event');
-      }
+      safeEmit(req.io, `download-error-${videoId}`, {
+        type: 'song',
+        error: error.message,
+        statusCode: error.statusCode,
+      });
     }
 
     if (albumId) {
-      try {
-        req.io.emit(`album-error-${albumId}`, {
-          type: 'album',
-          error: error.message,
-          statusCode: error.statusCode,
-        });
-      } catch (emitErr) {
-        logger.warn({ err: emitErr }, 'Failed to emit socket event');
-      }
+      safeEmit(req.io, `album-error-${albumId}`, {
+        type: 'album',
+        error: error.message,
+        statusCode: error.statusCode,
+      });
     }
   }
 

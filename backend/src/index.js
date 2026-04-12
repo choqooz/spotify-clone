@@ -35,6 +35,9 @@ import playlistRoutes from './routes/playlist.route.js';
 
 dotenv.config();
 
+/** Cron expression that fires at the top of every hour */
+const HOURLY_CRON = '0 * * * *';
+
 // ── Validate required env vars before doing anything ────────────────────────
 const REQUIRED_ENV = ['PORT', 'MONGODB_URI', 'ADMIN_EMAIL', 'CLERK_SECRET_KEY'];
 const missing = REQUIRED_ENV.filter((k) => !process.env[k]);
@@ -119,7 +122,7 @@ app.use(
 );
 
 // ── Cron: clean up downloaded files older than 2 hours ───────────────────────
-cron.schedule('0 * * * *', async () => {
+cron.schedule(HOURLY_CRON, async () => {
   try {
     await downloadService.cleanupOldFiles(2);
   } catch (err) {
@@ -129,7 +132,7 @@ cron.schedule('0 * * * *', async () => {
 
 // ── Cron: clean up tmp files every hour ──────────────────────────────────────
 const tempDir = path.join(process.cwd(), 'tmp');
-cron.schedule('0 * * * *', async () => {
+cron.schedule(HOURLY_CRON, async () => {
   if (!existsSync(tempDir)) return;
   try {
     const files = await fs.readdir(tempDir);

@@ -8,18 +8,7 @@ import {
   ConflictError,
 } from '../middleware/error.middleware.js';
 import { logger } from '../lib/logger.js';
-
-/**
- * Safely emit a Socket.IO event. The socket may be closed/invalid by the time
- * the download completes — swallow the error so it never crashes the handler.
- */
-const safeEmit = (io, event, data) => {
-  try {
-    io.emit(event, data);
-  } catch (err) {
-    logger.warn({ err }, 'Failed to emit socket event');
-  }
-};
+import { safeEmit } from '../lib/socket.js';
 
 const createDownloadKey = (type, id, format, quality) => {
   return `${type}_${id}_${format}_${quality}`;

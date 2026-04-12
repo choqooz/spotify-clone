@@ -720,12 +720,7 @@ class DownloadService {
 
     // Prefer native .m4a (AAC) audio-only streams
     const audioOnlyFormats = formats.filter(
-      (f) =>
-        f.acodec &&
-        f.acodec !== 'none' &&
-        (!f.vcodec || f.vcodec === 'none') &&
-        f.abr &&
-        f.ext === 'm4a'
+      (f) => this._isAudioOnlyFormat(f) && f.abr && f.ext === 'm4a'
     );
 
     let audioSourceFormats = audioOnlyFormats;
@@ -1232,10 +1227,7 @@ class DownloadService {
         throw new Error('No formats available');
       }
 
-      const audioFormats = info.formats.filter(
-        (f) =>
-          f.acodec && f.acodec !== 'none' && (!f.vcodec || f.vcodec === 'none')
-      );
+      const audioFormats = info.formats.filter((f) => this._isAudioOnlyFormat(f));
 
       let bestFormat = null;
 
@@ -1295,6 +1287,19 @@ class DownloadService {
 
   // ── Format helpers ────────────────────────────────────────────────────────────
 
+  /**
+   * Returns true for audio-only formats: has an audio codec and no video codec.
+   * @param {{ acodec?: string, vcodec?: string }} format
+   * @returns {boolean}
+   */
+  _isAudioOnlyFormat(format) {
+    return (
+      Boolean(format.acodec) &&
+      format.acodec !== 'none' &&
+      (!format.vcodec || format.vcodec === 'none')
+    );
+  }
+
   getFormatName(formatConfig) {
     if (formatConfig.filter === 'audioonly') return formatConfig.type || 'audio';
     if (formatConfig.filter === 'audioandvideo') return formatConfig.type || 'mp4';
@@ -1306,12 +1311,7 @@ class DownloadService {
     const isAudio = format.startsWith('audioonly') || format === 'audioonly';
 
     if (isAudio) {
-      const audioFormats = formats.filter(
-        (f) =>
-          f.acodec &&
-          f.acodec !== 'none' &&
-          (!f.vcodec || f.vcodec === 'none')
-      );
+      const audioFormats = formats.filter((f) => this._isAudioOnlyFormat(f));
 
       const best = audioFormats.reduce(
         (b, c) => ((c.abr || 0) > (b.abr || 0) ? c : b),
@@ -1530,3 +1530,14 @@ export const tempExtForFormat = (format) => {
   if (format === 'audioandvideo' || format === 'videoonly') return 'mp4';
   return 'm4a';
 };
+
+/**
+ * Returns true for audio-only formats: has an audio codec and no video codec.
+ * Exported as a pure function for unit-testability without instantiating DownloadService.
+ * @param {{ acodec?: string, vcodec?: string }} format
+ * @returns {boolean}
+ */
+export const isAudioOnlyFormat = (format) =>
+  Boolean(format.acodec) &&
+  format.acodec !== 'none' &&
+  (!format.vcodec || format.vcodec === 'none');
