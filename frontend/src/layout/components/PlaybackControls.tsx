@@ -3,6 +3,7 @@ import { Slider } from '@/components/ui/slider';
 import { usePlayerStore } from '@/stores/usePlayerStore';
 import { useLyricsStore } from '@/stores/useLyricsStore';
 import {
+  Keyboard,
   Mic2,
   Pause,
   Play,
@@ -106,6 +107,7 @@ export const PlaybackControls = () => {
   const [showMobileVolume, setShowMobileVolume] = useState(false);
   const [isClosing, setIsClosing] = useState(false);
   const [isOpening, setIsOpening] = useState(false);
+  const [showShortcuts, setShowShortcuts] = useState(false);
   const mobileVolumeRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -137,23 +139,6 @@ export const PlaybackControls = () => {
       document.removeEventListener('mousedown', handleClickOutside);
     };
   }, [showMobileVolume]);
-
-  // Keyboard shortcuts: S = shuffle, R = repeat (only when no input focused)
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      const tag = (e.target as HTMLElement).tagName;
-      if (tag === 'INPUT' || tag === 'TEXTAREA') return;
-
-      if (e.key === 's' || e.key === 'S') {
-        toggleShuffle();
-      } else if (e.key === 'r' || e.key === 'R') {
-        cycleRepeatMode();
-      }
-    };
-
-    document.addEventListener('keydown', handleKeyDown);
-    return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [toggleShuffle, cycleRepeatMode]);
 
   const getVolumeIcon = () => {
     if (isMuted || volume === 0) return <VolumeX className="h-4 w-4" />;
@@ -350,7 +335,7 @@ export const PlaybackControls = () => {
           </div>
         </div>
 
-        {/* Desktop volume controls */}
+        {/* Desktop volume controls + shortcuts hint */}
         <div className="hidden sm:flex items-center gap-4 min-w-[180px] w-[30%] justify-end">
           <div className="flex items-center gap-2">
             <Button
@@ -372,6 +357,35 @@ export const PlaybackControls = () => {
               className="w-24 hover:cursor-grab active:cursor-grabbing"
               onValueChange={handleVolumeChange}
             />
+          </div>
+
+          {/* Keyboard shortcuts hint */}
+          <div className="relative">
+            <Button
+              size="icon"
+              variant="ghost"
+              onMouseEnter={() => setShowShortcuts(true)}
+              onMouseLeave={() => setShowShortcuts(false)}
+              className="hover:text-white text-zinc-500 h-7 w-7">
+              <Keyboard className="h-3.5 w-3.5" />
+            </Button>
+
+            {showShortcuts && (
+              <div className="absolute bottom-full right-0 mb-2 w-52 bg-zinc-800 border border-zinc-700 rounded-lg p-3 shadow-xl text-xs z-50">
+                <p className="text-zinc-300 font-semibold mb-2">Keyboard Shortcuts</p>
+                <ul className="space-y-1 text-zinc-400">
+                  <li className="flex justify-between"><span>Play / Pause</span><kbd className="text-zinc-300">Space</kbd></li>
+                  <li className="flex justify-between"><span>Previous</span><kbd className="text-zinc-300">←</kbd></li>
+                  <li className="flex justify-between"><span>Next</span><kbd className="text-zinc-300">→</kbd></li>
+                  <li className="flex justify-between"><span>Volume up</span><kbd className="text-zinc-300">↑</kbd></li>
+                  <li className="flex justify-between"><span>Volume down</span><kbd className="text-zinc-300">↓</kbd></li>
+                  <li className="flex justify-between"><span>Mute</span><kbd className="text-zinc-300">M</kbd></li>
+                  <li className="flex justify-between"><span>Lyrics</span><kbd className="text-zinc-300">L</kbd></li>
+                  <li className="flex justify-between"><span>Shuffle</span><kbd className="text-zinc-300">S</kbd></li>
+                  <li className="flex justify-between"><span>Repeat</span><kbd className="text-zinc-300">R</kbd></li>
+                </ul>
+              </div>
+            )}
           </div>
         </div>
       </div>
