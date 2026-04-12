@@ -213,7 +213,7 @@ export const SearchPage = () => {
       title: r.title,
       artist: r.artist,
       albumId: null,
-      imageUrl: r.imageUrl,
+      imageUrl: r.imageUrl ?? '',
       audioUrl: null,
       duration: r.duration,
       createdAt: new Date().toISOString(),
