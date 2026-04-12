@@ -7,6 +7,7 @@ import { Clock, Pause, Play } from 'lucide-react';
 import { useEffect } from 'react';
 import { useParams } from 'react-router-dom';
 import { useShallow } from 'zustand/react/shallow';
+import { AlbumHeaderSkeleton } from '@/components/skeletons/AlbumHeaderSkeleton';
 
 export const AlbumPage = () => {
   const { albumId } = useParams();
@@ -30,7 +31,15 @@ export const AlbumPage = () => {
     if (albumId) fetchAlbumById(albumId);
   }, [fetchAlbumById, albumId]);
 
-  if (isLoading) return null;
+  if (isLoading) {
+    return (
+      <div className="h-full">
+        <ScrollArea className="h-full rounded-md">
+          <AlbumHeaderSkeleton />
+        </ScrollArea>
+      </div>
+    );
+  }
 
   const handlePlayAlbum = () => {
     if (!currentAlbum) return;
