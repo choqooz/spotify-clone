@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { persist } from 'zustand/middleware';
 import { Song } from '@/types';
 import { useChatStore } from './useChatStore';
 
@@ -59,7 +60,9 @@ interface PlayerStore {
   clearRestartCommand: () => void;
 }
 
-export const usePlayerStore = create<PlayerStore>((set, get) => ({
+export const usePlayerStore = create<PlayerStore>()(
+  persist(
+    (set, get) => ({
   currentSong: null,
   isPlaying: false,
   queue: [],
@@ -293,4 +296,14 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
   clearSeekCommand: () => set({ seekCommand: null }),
   clearVolumeCommand: () => set({ volumeCommand: null }),
   clearRestartCommand: () => set({ restartCommand: null }),
-}));
+    }),
+    {
+      name: 'player-storage',
+      partialize: (state) => ({
+        volume: state.volume,
+        isShuffled: state.isShuffled,
+        repeatMode: state.repeatMode,
+      }),
+    }
+  )
+);
