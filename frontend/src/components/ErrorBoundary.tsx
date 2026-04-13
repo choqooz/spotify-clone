@@ -55,6 +55,7 @@ class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoundarySta
 
       return (
         <div
+          role="alert"
           className={cn(
             'flex flex-col items-center justify-center gap-3 rounded-lg',
             'bg-zinc-900 border border-zinc-700 p-6 text-center'

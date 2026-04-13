@@ -174,10 +174,18 @@ export const PlaybackControls = () => {
   };
 
   return (
-    <footer className="h-20 sm:h-24 bg-zinc-900 border-t border-zinc-800 px-4">
+    <footer
+      className="h-20 sm:h-24 bg-zinc-900 border-t border-zinc-800 px-4"
+      role="region"
+      aria-label="Music player"
+    >
       <div className="flex justify-center sm:justify-between items-center h-full max-w-[1800px] mx-auto">
         {/* currently playing song */}
-        <div className="flex items-center gap-2 sm:gap-4 min-w-0 flex-1 sm:min-w-[180px] sm:w-[30%] sm:flex-none">
+        <div
+          className="flex items-center gap-2 sm:gap-4 min-w-0 flex-1 sm:min-w-[180px] sm:w-[30%] sm:flex-none"
+          aria-live="polite"
+          aria-atomic="true"
+        >
           {currentSong && (
             <>
               <img
@@ -214,6 +222,8 @@ export const PlaybackControls = () => {
               size="icon"
               variant="ghost"
               onClick={toggleShuffle}
+              aria-label="Toggle shuffle"
+              aria-pressed={isShuffled}
               className={cn(
                 'hidden sm:inline-flex hover:text-white',
                 isShuffled ? 'text-emerald-400' : 'text-zinc-400'
@@ -226,6 +236,8 @@ export const PlaybackControls = () => {
               size="icon"
               variant="ghost"
               onClick={toggleLyrics}
+              aria-label="Toggle lyrics"
+              aria-pressed={lyricsVisible}
               className={cn('hover:text-white', lyricsVisible ? 'text-green-500' : 'text-zinc-400')}>
               <Mic2 className="h-4 w-4" />
             </Button>
@@ -235,6 +247,7 @@ export const PlaybackControls = () => {
               variant="ghost"
               className="hover:text-white text-zinc-400"
               onClick={playPrevious}
+              aria-label="Previous track"
               disabled={!currentSong}>
               <SkipBack className="h-4 w-4" />
             </Button>
@@ -243,6 +256,7 @@ export const PlaybackControls = () => {
               size="icon"
               className="bg-white hover:bg-white/80 text-black rounded-full h-8 w-8"
               onClick={togglePlay}
+              aria-label={isPlaying ? 'Pause' : 'Play'}
               disabled={!currentSong}>
               {isPlaying ? (
                 <Pause className="h-5 w-5" />
@@ -256,6 +270,7 @@ export const PlaybackControls = () => {
               variant="ghost"
               className="hover:text-white text-zinc-400"
               onClick={playNext}
+              aria-label="Next track"
               disabled={!currentSong}>
               <SkipForward className="h-4 w-4" />
             </Button>
@@ -265,6 +280,8 @@ export const PlaybackControls = () => {
               size="icon"
               variant="ghost"
               onClick={cycleRepeatMode}
+              aria-label={repeatMode === 'one' ? 'Repeat one' : 'Toggle repeat'}
+              aria-pressed={repeatMode !== 'none'}
               className={cn(
                 'hidden sm:inline-flex hover:text-white',
                 repeatMode !== 'none' ? 'text-emerald-400' : 'text-zinc-400'
@@ -278,6 +295,7 @@ export const PlaybackControls = () => {
                 size="icon"
                 variant="ghost"
                 onClick={toggleMobileVolume}
+                aria-label={isMuted || volume === 0 ? 'Unmute' : 'Mute'}
                 className={cn('hover:text-white transition-colors', showMobileVolume ? 'text-white bg-zinc-800' : 'text-zinc-400')}>
                 {getVolumeIcon()}
               </Button>
@@ -296,6 +314,10 @@ export const PlaybackControls = () => {
                       max={100}
                       step={1}
                       orientation="vertical"
+                      aria-label="Volume"
+                      aria-valuemin={0}
+                      aria-valuemax={100}
+                      aria-valuenow={volume}
                       className="h-full hover:cursor-grab active:cursor-grabbing"
                       onValueChange={handleVolumeChange}
                     />
@@ -314,6 +336,10 @@ export const PlaybackControls = () => {
               value={[currentTime]}
               max={duration || 100}
               step={1}
+              aria-label="Seek"
+              aria-valuemin={0}
+              aria-valuemax={duration || 100}
+              aria-valuenow={currentTime}
               className="w-full hover:cursor-grab active:cursor-grabbing"
               onValueChange={handleSeek}
             />
@@ -328,6 +354,10 @@ export const PlaybackControls = () => {
               value={[currentTime]}
               max={duration || 100}
               step={1}
+              aria-label="Seek"
+              aria-valuemin={0}
+              aria-valuemax={duration || 100}
+              aria-valuenow={currentTime}
               className="w-full hover:cursor-grab active:cursor-grabbing"
               onValueChange={handleSeek}
             />
@@ -342,6 +372,7 @@ export const PlaybackControls = () => {
               size="icon"
               variant="ghost"
               onClick={toggleMute}
+              aria-label={isMuted ? 'Unmute' : 'Mute'}
               className="hover:text-white text-zinc-400">
               {isMuted ? (
                 <VolumeX className="h-4 w-4" />
@@ -354,6 +385,10 @@ export const PlaybackControls = () => {
               value={[volume]}
               max={100}
               step={1}
+              aria-label="Volume"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={volume}
               className="w-24 hover:cursor-grab active:cursor-grabbing"
               onValueChange={handleVolumeChange}
             />
@@ -364,6 +399,8 @@ export const PlaybackControls = () => {
             <Button
               size="icon"
               variant="ghost"
+              aria-label="Keyboard shortcuts"
+              aria-describedby="keyboard-shortcuts-tooltip"
               onMouseEnter={() => setShowShortcuts(true)}
               onMouseLeave={() => setShowShortcuts(false)}
               className="hover:text-white text-zinc-500 h-7 w-7">
@@ -371,7 +408,10 @@ export const PlaybackControls = () => {
             </Button>
 
             {showShortcuts && (
-              <div className="absolute bottom-full right-0 mb-2 w-52 bg-zinc-800 border border-zinc-700 rounded-lg p-3 shadow-xl text-xs z-50">
+              <div
+                id="keyboard-shortcuts-tooltip"
+                role="tooltip"
+                className="absolute bottom-full right-0 mb-2 w-52 bg-zinc-800 border border-zinc-700 rounded-lg p-3 shadow-xl text-xs z-50">
                 <p className="text-zinc-300 font-semibold mb-2">Keyboard Shortcuts</p>
                 <ul className="space-y-1 text-zinc-400">
                   <li className="flex justify-between"><span>Play / Pause</span><kbd className="text-zinc-300">Space</kbd></li>

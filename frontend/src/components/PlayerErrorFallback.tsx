@@ -15,6 +15,7 @@ const PlayerErrorFallback = ({ onRetry }: PlayerErrorFallbackProps) => {
 
   return (
     <div
+      role="alert"
       className={cn(
         'flex items-center justify-between gap-4 px-4',
         'h-20 sm:h-24 bg-zinc-900 border-t border-zinc-800'

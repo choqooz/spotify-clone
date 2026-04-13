@@ -28,8 +28,8 @@ export function OfflineBanner() {
         'bg-yellow-500/90 backdrop-blur-sm text-yellow-950',
         'text-sm font-medium'
       )}
-      role="status"
-      aria-live="polite"
+      role="alert"
+      aria-live="assertive"
     >
       <WifiOff className="size-4 shrink-0" />
       <span>You're offline — some features may be limited</span>
