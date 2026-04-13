@@ -25,6 +25,7 @@ class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoundarySta
 
   componentDidCatch(error: Error, errorInfo: React.ErrorInfo): void {
     console.error('[ErrorBoundary] Caught error:', error, errorInfo);
+    if (import.meta.env.VITE_SENTRY_DSN) { import('../lib/sentry').then(({ Sentry }) => Sentry.captureException(error)).catch(() => {}); }
     this.props.onError?.(error, errorInfo);
   }
 
