@@ -147,6 +147,13 @@ class DownloadService {
       } catch {
         logger.warn('ffmpeg not found — audio conversion disabled');
       }
+
+      // Pre-warm the authenticated Innertube session so the first user request
+      // doesn't pay the ~15s init cost. Fire-and-forget — if it fails, the
+      // first real request will retry and fall back to the unauthed singleton.
+      getAuthedInnertube(this.cookiesFile).catch((err) => {
+        logger.warn({ err: err.message }, 'Pre-warm authed Innertube failed (will retry on first request)');
+      });
     } catch (error) {
       logger.error({ err: error }, 'Download service initialization failed');
       throw error;
@@ -658,7 +665,14 @@ class DownloadService {
       };
     } catch (error) {
       logger.error({ err: error, videoId }, 'Download failed');
-      throw new Error(`Download failed: ${error.message}`);
+      // Provide actionable error messages instead of generic 500
+      const msg = error.message ?? '';
+      if (msg.includes('non 2xx status code') || error.info?.error_type === 'FETCH_FAILED') {
+        throw new Error(
+          'YouTube blocked the download stream. This happens on cloud servers — try a different format or try again later.'
+        );
+      }
+      throw new Error(`Download failed: ${msg}`);
     }
   }
 
