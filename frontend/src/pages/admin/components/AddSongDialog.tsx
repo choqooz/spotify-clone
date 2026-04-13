@@ -145,52 +145,63 @@ export const AddSongDialog = () => {
 						</div>
 					</div>
 
-					{/* Audio upload */}
-					<div className='space-y-2'>
-						<label className='text-sm font-medium'>Audio File</label>
-						<div className='flex items-center gap-2'>
-							<Button variant='outline' onClick={() => audioInputRef.current?.click()} className='w-full'>
-								{files.audio ? files.audio.name.slice(0, 20) : "Choose Audio File"}
-							</Button>
-						</div>
+				{/* Audio upload */}
+				<div className='space-y-2'>
+					<span className='text-sm font-medium' id="audio-file-label">Audio File</span>
+					<div className='flex items-center gap-2'>
+						<Button
+							variant='outline'
+							onClick={() => audioInputRef.current?.click()}
+							aria-describedby="audio-file-label"
+							aria-label={files.audio ? `Audio file selected: ${files.audio.name}` : 'Choose audio file'}
+							className='w-full'>
+							{files.audio ? files.audio.name.slice(0, 20) : "Choose Audio File"}
+						</Button>
 					</div>
+				</div>
 
-					{/* other fields */}
-					<div className='space-y-2'>
-						<label className='text-sm font-medium'>Title</label>
-						<Input
-							value={newSong.title}
-							onChange={(e) => setNewSong({ ...newSong, title: e.target.value })}
-							className='bg-zinc-800 border-zinc-700'
-						/>
-					</div>
+				{/* other fields */}
+				<div className='space-y-2'>
+					<label htmlFor="song-title" className='text-sm font-medium'>Title</label>
+					<Input
+						id="song-title"
+						aria-required="true"
+						value={newSong.title}
+						onChange={(e) => setNewSong({ ...newSong, title: e.target.value })}
+						className='bg-zinc-800 border-zinc-700'
+					/>
+				</div>
 
-					<div className='space-y-2'>
-						<label className='text-sm font-medium'>Artist</label>
-						<Input
-							value={newSong.artist}
-							onChange={(e) => setNewSong({ ...newSong, artist: e.target.value })}
-							className='bg-zinc-800 border-zinc-700'
-						/>
-					</div>
+				<div className='space-y-2'>
+					<label htmlFor="song-artist" className='text-sm font-medium'>Artist</label>
+					<Input
+						id="song-artist"
+						aria-required="true"
+						value={newSong.artist}
+						onChange={(e) => setNewSong({ ...newSong, artist: e.target.value })}
+						className='bg-zinc-800 border-zinc-700'
+					/>
+				</div>
 
-					<div className='space-y-2'>
-						<label className='text-sm font-medium'>Duration (seconds)</label>
-						<Input
-							type='number'
-							min='0'
-							value={newSong.duration}
-							onChange={(e) => setNewSong({ ...newSong, duration: e.target.value || "0" })}
-							className='bg-zinc-800 border-zinc-700'
-						/>
-					</div>
+				<div className='space-y-2'>
+					<label htmlFor="song-duration" className='text-sm font-medium'>Duration (seconds)</label>
+					<Input
+						id="song-duration"
+						type='number'
+						min='0'
+						aria-required="true"
+						value={newSong.duration}
+						onChange={(e) => setNewSong({ ...newSong, duration: e.target.value || "0" })}
+						className='bg-zinc-800 border-zinc-700'
+					/>
+				</div>
 
-					<div className='space-y-2'>
-						<label className='text-sm font-medium'>Album (Optional)</label>
-						<Select
-							value={newSong.album}
-							onValueChange={(value) => setNewSong({ ...newSong, album: value })}
-						>
+				<div className='space-y-2'>
+					<label htmlFor="song-album" className='text-sm font-medium'>Album (Optional)</label>
+					<Select
+						value={newSong.album}
+						onValueChange={(value) => setNewSong({ ...newSong, album: value })}
+					>
 							<SelectTrigger className='bg-zinc-800 border-zinc-700'>
 								<SelectValue placeholder='Select album' />
 							</SelectTrigger>

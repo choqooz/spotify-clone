@@ -106,36 +106,42 @@ export const AddAlbumDialog = () => {
 							</Button>
 						</div>
 					</div>
-					<div className='space-y-2'>
-						<label className='text-sm font-medium'>Album Title</label>
-						<Input
-							value={newAlbum.title}
-							onChange={(e) => setNewAlbum({ ...newAlbum, title: e.target.value })}
-							className='bg-zinc-800 border-zinc-700'
-							placeholder='Enter album title'
-						/>
-					</div>
-					<div className='space-y-2'>
-						<label className='text-sm font-medium'>Artist</label>
-						<Input
-							value={newAlbum.artist}
-							onChange={(e) => setNewAlbum({ ...newAlbum, artist: e.target.value })}
-							className='bg-zinc-800 border-zinc-700'
-							placeholder='Enter artist name'
-						/>
-					</div>
-					<div className='space-y-2'>
-						<label className='text-sm font-medium'>Release Year</label>
-						<Input
-							type='number'
-							value={newAlbum.releaseYear}
-							onChange={(e) => setNewAlbum({ ...newAlbum, releaseYear: parseInt(e.target.value) })}
-							className='bg-zinc-800 border-zinc-700'
-							placeholder='Enter release year'
-							min={1900}
-							max={new Date().getFullYear()}
-						/>
-					</div>
+				<div className='space-y-2'>
+					<label htmlFor="album-title" className='text-sm font-medium'>Album Title</label>
+					<Input
+						id="album-title"
+						aria-required="true"
+						value={newAlbum.title}
+						onChange={(e) => setNewAlbum({ ...newAlbum, title: e.target.value })}
+						className='bg-zinc-800 border-zinc-700'
+						placeholder='Enter album title'
+					/>
+				</div>
+				<div className='space-y-2'>
+					<label htmlFor="album-artist" className='text-sm font-medium'>Artist</label>
+					<Input
+						id="album-artist"
+						aria-required="true"
+						value={newAlbum.artist}
+						onChange={(e) => setNewAlbum({ ...newAlbum, artist: e.target.value })}
+						className='bg-zinc-800 border-zinc-700'
+						placeholder='Enter artist name'
+					/>
+				</div>
+				<div className='space-y-2'>
+					<label htmlFor="album-year" className='text-sm font-medium'>Release Year</label>
+					<Input
+						id="album-year"
+						type='number'
+						aria-required="true"
+						value={newAlbum.releaseYear}
+						onChange={(e) => setNewAlbum({ ...newAlbum, releaseYear: parseInt(e.target.value) })}
+						className='bg-zinc-800 border-zinc-700'
+						placeholder='Enter release year'
+						min={1900}
+						max={new Date().getFullYear()}
+					/>
+				</div>
 				</div>
 				<DialogFooter>
 					<Button variant='outline' onClick={() => setAlbumDialogOpen(false)} disabled={isLoading}>

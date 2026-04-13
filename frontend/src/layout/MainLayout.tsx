@@ -31,9 +31,9 @@ export const MainLayout = () => {
 
         {/* Contenido principal - ocupa todo el espacio disponible */}
         <ErrorBoundary>
-          <div className="flex-1 overflow-hidden">
+          <main id="main-content" className="flex-1 overflow-hidden">
             <Outlet />
-          </div>
+          </main>
         </ErrorBoundary>
 
         {/* Player arriba del bottom nav */}
@@ -74,7 +74,9 @@ export const MainLayout = () => {
         {/* Main content */}
         <ResizablePanel defaultSize={60}>
           <ErrorBoundary>
-            <Outlet />
+            <main id="main-content">
+              <Outlet />
+            </main>
           </ErrorBoundary>
         </ResizablePanel>
 

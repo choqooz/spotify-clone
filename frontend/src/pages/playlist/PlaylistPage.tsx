@@ -148,11 +148,16 @@ export const PlaylistPage = () => {
                 onClick={handlePlayPlaylist}
                 disabled={songs.length === 0}
                 size="icon"
+                aria-label={
+                  isPlaying && songs.some((song) => song._id === currentSong?._id)
+                    ? `Pause ${currentPlaylist.name}`
+                    : `Play ${currentPlaylist.name}`
+                }
                 className="w-14 h-14 rounded-full bg-green-500 hover:bg-green-400 hover:scale-105 transition-all disabled:opacity-50">
                 {isPlaying && songs.some((song) => song._id === currentSong?._id) ? (
-                  <Pause className="h-7 w-7 text-black" />
+                  <Pause className="h-7 w-7 text-black" aria-hidden="true" />
                 ) : (
-                  <Play className="h-7 w-7 text-black" />
+                  <Play className="h-7 w-7 text-black" aria-hidden="true" />
                 )}
               </Button>
             </div>
@@ -165,12 +170,14 @@ export const PlaylistPage = () => {
                   isOwner
                     ? 'grid-cols-[16px_4fr_2fr_1fr_auto]'
                     : 'grid-cols-[16px_4fr_2fr_1fr]'
-                }`}>
+                }`}
+                role="row"
+                aria-hidden="true">
                 <div>#</div>
                 <div>Title</div>
                 <div>Artist</div>
                 <div>
-                  <Clock className="h-4 w-4" />
+                  <Clock className="h-4 w-4" aria-label="Duration" />
                 </div>
                 {isOwner && <div />}
               </div>
@@ -181,12 +188,13 @@ export const PlaylistPage = () => {
                 </div>
               ) : (
                 <div className="px-6">
-                  <div className="space-y-2 py-4">
+                  <ul role="list" aria-label={`Songs in ${currentPlaylist.name}`} className="space-y-2 py-4">
                     {songs.map((song, index) => {
                       const isCurrentSong = currentSong?._id === song._id;
                       return (
-                        <div
+                        <li
                           key={song._id}
+                          aria-label={`${index + 1}. ${song.title} by ${song.artist}`}
                           className={`grid gap-4 px-4 py-2 text-sm text-zinc-400 hover:bg-white/5 rounded-md group ${
                             isOwner
                               ? 'grid-cols-[16px_4fr_2fr_1fr_auto]'
@@ -194,6 +202,7 @@ export const PlaylistPage = () => {
                           }`}>
                           <div
                             className="flex items-center justify-center cursor-pointer"
+                            aria-hidden="true"
                             onClick={() => handlePlaySong(index)}>
                             {isCurrentSong && isPlaying ? (
                               <div className="size-4 text-green-500">♫</div>
@@ -232,16 +241,17 @@ export const PlaylistPage = () => {
                               <Button
                                 variant="ghost"
                                 size="icon"
+                                aria-label={`Remove ${song.title} from playlist`}
                                 className="opacity-0 group-hover:opacity-100 h-8 w-8 text-zinc-400 hover:text-red-400"
                                 onClick={() => removeSong(currentPlaylist._id, song._id)}>
-                                <Trash2 className="h-4 w-4" />
+                                <Trash2 className="h-4 w-4" aria-hidden="true" />
                               </Button>
                             </div>
                           )}
-                        </div>
+                        </li>
                       );
                     })}
-                  </div>
+                  </ul>
                 </div>
               )}
             </div>

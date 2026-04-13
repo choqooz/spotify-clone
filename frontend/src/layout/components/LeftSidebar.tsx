@@ -16,7 +16,7 @@ import {
   Download,
 } from 'lucide-react';
 import { useEffect } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import { useIsMobile } from '@/hooks/useIsMobile';
 
 interface LeftSidebarProps {
@@ -29,6 +29,7 @@ export const LeftSidebar = ({ onOpenDownloadPanel }: LeftSidebarProps) => {
   );
   const { activeDownloads } = useDownloadStore();
   const isMobile = useIsMobile();
+  const { pathname } = useLocation();
 
   useEffect(() => {
     fetchAlbums();
@@ -37,10 +38,11 @@ export const LeftSidebar = ({ onOpenDownloadPanel }: LeftSidebarProps) => {
   if (isMobile) {
     // Layout móvil: navegación horizontal simple
     return (
-      <div className="bg-zinc-900 p-2">
+      <nav aria-label="Main navigation" className="bg-zinc-900 p-2">
         <div className="flex justify-around items-center">
           <Link
             to={'/'}
+            aria-current={pathname === '/' ? 'page' : undefined}
             className={cn(
               buttonVariants({
                 variant: 'ghost',
@@ -48,12 +50,13 @@ export const LeftSidebar = ({ onOpenDownloadPanel }: LeftSidebarProps) => {
                 className: 'flex-col h-auto py-2 text-white hover:bg-zinc-800',
               })
             )}>
-            <HomeIcon className="size-5 mb-1" />
+            <HomeIcon className="size-5 mb-1" aria-hidden="true" />
             <span className="text-xs">Home</span>
           </Link>
 
           <Link
             to={'/search'}
+            aria-current={pathname === '/search' ? 'page' : undefined}
             className={cn(
               buttonVariants({
                 variant: 'ghost',
@@ -61,12 +64,13 @@ export const LeftSidebar = ({ onOpenDownloadPanel }: LeftSidebarProps) => {
                 className: 'flex-col h-auto py-2 text-white hover:bg-zinc-800',
               })
             )}>
-            <Search className="size-5 mb-1" />
+            <Search className="size-5 mb-1" aria-hidden="true" />
             <span className="text-xs">Search</span>
           </Link>
 
           <button
             onClick={onOpenDownloadPanel}
+            aria-label={`Downloads${activeDownloads.size > 0 ? `, ${activeDownloads.size} active` : ''}`}
             className={cn(
               buttonVariants({
                 variant: 'ghost',
@@ -75,10 +79,10 @@ export const LeftSidebar = ({ onOpenDownloadPanel }: LeftSidebarProps) => {
                   'flex-col h-auto py-2 text-white hover:bg-zinc-800 relative',
               })
             )}>
-            <Download className="size-5 mb-1" />
+            <Download className="size-5 mb-1" aria-hidden="true" />
             <span className="text-xs">Downloads</span>
             {activeDownloads.size > 0 && (
-              <div className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 rounded-full flex items-center justify-center text-xs text-white">
+              <div aria-hidden="true" className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 rounded-full flex items-center justify-center text-xs text-white">
                 {activeDownloads.size}
               </div>
             )}
@@ -87,6 +91,7 @@ export const LeftSidebar = ({ onOpenDownloadPanel }: LeftSidebarProps) => {
           <SignedIn>
             <Link
               to={'/favorites'}
+              aria-current={pathname === '/favorites' ? 'page' : undefined}
               className={cn(
                 buttonVariants({
                   variant: 'ghost',
@@ -94,7 +99,7 @@ export const LeftSidebar = ({ onOpenDownloadPanel }: LeftSidebarProps) => {
                   className: 'flex-col h-auto py-2 text-white hover:bg-zinc-800',
                 })
               )}>
-              <Heart className="size-5 mb-1" />
+              <Heart className="size-5 mb-1" aria-hidden="true" />
               <span className="text-xs">Favorites</span>
             </Link>
           </SignedIn>
@@ -102,6 +107,7 @@ export const LeftSidebar = ({ onOpenDownloadPanel }: LeftSidebarProps) => {
           <SignedIn>
             <Link
               to={'/playlists'}
+              aria-current={pathname === '/playlists' ? 'page' : undefined}
               className={cn(
                 buttonVariants({
                   variant: 'ghost',
@@ -109,13 +115,14 @@ export const LeftSidebar = ({ onOpenDownloadPanel }: LeftSidebarProps) => {
                   className: 'flex-col h-auto py-2 text-white hover:bg-zinc-800',
                 })
               )}>
-              <ListMusic className="size-5 mb-1" />
+              <ListMusic className="size-5 mb-1" aria-hidden="true" />
               <span className="text-xs">Playlists</span>
             </Link>
           </SignedIn>
 
           <Link
             to={'/'}
+            aria-label="Library"
             className={cn(
               buttonVariants({
                 variant: 'ghost',
@@ -123,13 +130,14 @@ export const LeftSidebar = ({ onOpenDownloadPanel }: LeftSidebarProps) => {
                 className: 'flex-col h-auto py-2 text-white hover:bg-zinc-800',
               })
             )}>
-            <Library className="size-5 mb-1" />
+            <Library className="size-5 mb-1" aria-hidden="true" />
             <span className="text-xs">Library</span>
           </Link>
 
           <SignedIn>
             <Link
               to={'/chat'}
+              aria-current={pathname === '/chat' ? 'page' : undefined}
               className={cn(
                 buttonVariants({
                   variant: 'ghost',
@@ -138,12 +146,12 @@ export const LeftSidebar = ({ onOpenDownloadPanel }: LeftSidebarProps) => {
                     'flex-col h-auto py-2 text-white hover:bg-zinc-800',
                 })
               )}>
-              <MessageCircle className="size-5 mb-1" />
+              <MessageCircle className="size-5 mb-1" aria-hidden="true" />
               <span className="text-xs">Chat</span>
             </Link>
           </SignedIn>
         </div>
-      </div>
+      </nav>
     );
   }
 
@@ -151,23 +159,25 @@ export const LeftSidebar = ({ onOpenDownloadPanel }: LeftSidebarProps) => {
   return (
     <div className="h-full flex flex-col gap-2">
       {/* Navigation menu */}
-      <div className="rounded-lg bg-zinc-900 p-4">
+      <nav aria-label="Main navigation" className="rounded-lg bg-zinc-900 p-4">
         <div className="space-y-2">
           <Link
             to={'/'}
+            aria-current={pathname === '/' ? 'page' : undefined}
             className={cn(
               buttonVariants({
                 variant: 'ghost',
                 className: 'w-full justify-start text-white hover:bg-zinc-800',
               })
             )}>
-            <HomeIcon className="mr-2 size-5" />
+            <HomeIcon className="mr-2 size-5" aria-hidden="true" />
             <span className="hidden md:inline">Home</span>
           </Link>
 
           <SignedIn>
             <Link
               to={'/chat'}
+              aria-current={pathname === '/chat' ? 'page' : undefined}
               className={cn(
                 buttonVariants({
                   variant: 'ghost',
@@ -175,33 +185,35 @@ export const LeftSidebar = ({ onOpenDownloadPanel }: LeftSidebarProps) => {
                     'w-full justify-start text-white hover:bg-zinc-800',
                 })
               )}>
-              <MessageCircle className="mr-2 size-5" />
+              <MessageCircle className="mr-2 size-5" aria-hidden="true" />
               <span className="hidden md:inline">Messages</span>
             </Link>
           </SignedIn>
 
           <Link
             to={'/search'}
+            aria-current={pathname === '/search' ? 'page' : undefined}
             className={cn(
               buttonVariants({
                 variant: 'ghost',
                 className: 'w-full justify-start text-white hover:bg-zinc-800',
               })
             )}>
-            <Search className="mr-2 size-5" />
+            <Search className="mr-2 size-5" aria-hidden="true" />
             <span className="hidden md:inline">Search</span>
           </Link>
 
           <SignedIn>
             <Link
               to={'/favorites'}
+              aria-current={pathname === '/favorites' ? 'page' : undefined}
               className={cn(
                 buttonVariants({
                   variant: 'ghost',
                   className: 'w-full justify-start text-white hover:bg-zinc-800',
                 })
               )}>
-              <Heart className="mr-2 size-5" />
+              <Heart className="mr-2 size-5" aria-hidden="true" />
               <span className="hidden md:inline">Favorites</span>
             </Link>
           </SignedIn>
@@ -209,19 +221,21 @@ export const LeftSidebar = ({ onOpenDownloadPanel }: LeftSidebarProps) => {
           <SignedIn>
             <Link
               to={'/playlists'}
+              aria-current={pathname === '/playlists' ? 'page' : undefined}
               className={cn(
                 buttonVariants({
                   variant: 'ghost',
                   className: 'w-full justify-start text-white hover:bg-zinc-800',
                 })
               )}>
-              <ListMusic className="mr-2 size-5" />
+              <ListMusic className="mr-2 size-5" aria-hidden="true" />
               <span className="hidden md:inline">Playlists</span>
             </Link>
           </SignedIn>
 
           <button
             onClick={onOpenDownloadPanel}
+            aria-label={`Downloads${activeDownloads.size > 0 ? `, ${activeDownloads.size} active` : ''}`}
             className={cn(
               buttonVariants({
                 variant: 'ghost',
@@ -229,52 +243,54 @@ export const LeftSidebar = ({ onOpenDownloadPanel }: LeftSidebarProps) => {
                   'w-full justify-start text-white hover:bg-zinc-800 relative',
               })
             )}>
-            <Download className="mr-2 size-5" />
+            <Download className="mr-2 size-5" aria-hidden="true" />
             <span className="hidden md:inline">Downloads</span>
             {activeDownloads.size > 0 && (
-              <div className="absolute top-2 right-2 w-5 h-5 bg-red-500 rounded-full flex items-center justify-center text-xs text-white">
+              <div aria-hidden="true" className="absolute top-2 right-2 w-5 h-5 bg-red-500 rounded-full flex items-center justify-center text-xs text-white">
                 {activeDownloads.size}
               </div>
             )}
           </button>
         </div>
-      </div>
+      </nav>
 
       {/* Library section */}
       <div className="flex-1 rounded-lg bg-zinc-900 p-4">
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center text-white px-2">
-            <Library className="size-5 mr-2" />
+            <Library className="size-5 mr-2" aria-hidden="true" />
             <span className="hidden md:inline">Playlists</span>
           </div>
         </div>
 
         <ScrollArea className="h-[calc(100vh-300px)]">
-          <div className="space-y-2">
+          <ul className="space-y-2" role="list" aria-label="Album library">
             {isLoading ? (
               <PlaylistSkeleton />
             ) : (
               albums.map((album) => (
-                <Link
-                  to={`/albums/${album._id}`}
-                  key={album._id}
-                  className="p-2 hover:bg-zinc-800 rounded-md flex items-center gap-3 group cursor-pointer">
-                  <img
-                    src={album.imageUrl}
-                    alt="Playlist img"
-                    className="size-12 rounded-md flex-shrink-0 object-cover"
-                  />
+                <li key={album._id}>
+                  <Link
+                    to={`/albums/${album._id}`}
+                    aria-current={pathname === `/albums/${album._id}` ? 'page' : undefined}
+                    className="p-2 hover:bg-zinc-800 rounded-md flex items-center gap-3 group cursor-pointer">
+                    <img
+                      src={album.imageUrl}
+                      alt={album.title}
+                      className="size-12 rounded-md flex-shrink-0 object-cover"
+                    />
 
-                  <div className="flex-1 min-w-0 hidden md:block">
-                    <p className="font-medium truncate">{album.title}</p>
-                    <p className="text-sm text-zinc-400 truncate">
-                      Album • {album.artist}
-                    </p>
-                  </div>
-                </Link>
+                    <div className="flex-1 min-w-0 hidden md:block">
+                      <p className="font-medium truncate">{album.title}</p>
+                      <p className="text-sm text-zinc-400 truncate">
+                        Album • {album.artist}
+                      </p>
+                    </div>
+                  </Link>
+                </li>
               ))
             )}
-          </div>
+          </ul>
         </ScrollArea>
       </div>
     </div>

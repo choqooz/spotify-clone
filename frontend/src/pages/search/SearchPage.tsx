@@ -330,6 +330,10 @@ export const SearchPage = () => {
                   onChange={handleInputChange}
                   onFocus={handleInputFocus}
                   onBlur={handleInputBlur}
+                  aria-label="Search songs, artists and albums"
+                  aria-autocomplete="list"
+                  aria-controls="search-suggestions"
+                  aria-expanded={showSuggestions && searchSuggestions.length > 0}
                   className="pl-10 bg-zinc-800 border-zinc-700 text-white placeholder:text-zinc-400"
                 />
 
@@ -337,7 +341,10 @@ export const SearchPage = () => {
                 {showSuggestions &&
                   (searchSuggestions.length > 0 || isLoadingSuggestions) && (
                     <div
+                      id="search-suggestions"
                       ref={suggestionsRef}
+                      role="listbox"
+                      aria-label="Search suggestions"
                       className="absolute z-50 w-full mt-1 bg-zinc-800 border border-zinc-700 rounded-md shadow-lg max-h-60 overflow-y-auto">
                       {isLoadingSuggestions ? (
                         <div className="p-3 text-center text-zinc-400">
@@ -350,9 +357,11 @@ export const SearchPage = () => {
                         searchSuggestions.map((suggestion, index) => (
                           <div
                             key={index}
+                            role="option"
+                            aria-selected={false}
                             onClick={() => handleSuggestionClick(suggestion)}
                             className="px-4 py-2 text-white hover:bg-zinc-700 cursor-pointer flex items-center gap-3 border-b border-zinc-700 last:border-b-0">
-                            <Search className="size-4 text-zinc-400" />
+                            <Search className="size-4 text-zinc-400" aria-hidden="true" />
                             <span className="truncate">{suggestion}</span>
                           </div>
                         ))
@@ -413,7 +422,7 @@ export const SearchPage = () => {
 
           {/* Search Results */}
           {searchQuery && (
-            <div className="mb-8">
+            <div className="mb-8" aria-live="polite" aria-atomic="true">
               {isLoading && (
                 <div className="flex items-center justify-center py-12">
                   <Loader className="size-8 animate-spin text-green-500" />
@@ -447,6 +456,10 @@ export const SearchPage = () => {
 
               {/* Results - Responsive design: list on mobile, grid on desktop */}
               {!isLoading && searchResults.length > 0 && (
+                <>
+                  <span className="sr-only">
+                    {searchResults.length} result{searchResults.length !== 1 ? 's' : ''} found for "{searchQuery}"
+                  </span>
                 <div className="space-y-2 lg:space-y-0 lg:grid lg:grid-cols-3 lg:gap-4">
                   {searchResults.map((item) => (
                     <div
@@ -501,6 +514,11 @@ export const SearchPage = () => {
                           <Button
                             size="icon"
                             onClick={() => handlePlay(item)}
+                            aria-label={
+                              currentSong?._id === item.videoId && isPlaying
+                                ? `Pause ${item.title}`
+                                : `Play ${item.title}`
+                            }
                             className={`w-8 h-8 lg:w-10 lg:h-10 bg-green-500 hover:bg-green-400 hover:scale-105 transition-all
                               opacity-0 group-hover:opacity-100 lg:translate-y-2 lg:group-hover:translate-y-0 ${
                                 currentSong?._id === item.videoId
@@ -508,9 +526,9 @@ export const SearchPage = () => {
                                   : ''
                               }`}>
                             {currentSong?._id === item.videoId && isPlaying ? (
-                              <Pause className="size-3 lg:size-4 text-black" />
+                              <Pause className="size-3 lg:size-4 text-black" aria-hidden="true" />
                             ) : (
-                              <Play className="size-3 lg:size-4 text-black" />
+                              <Play className="size-3 lg:size-4 text-black" aria-hidden="true" />
                             )}
                           </Button>
                         </div>
@@ -527,6 +545,7 @@ export const SearchPage = () => {
                     </div>
                   ))}
                 </div>
+                </>
               )}
             </div>
           )}
