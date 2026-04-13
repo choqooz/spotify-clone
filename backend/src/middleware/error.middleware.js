@@ -44,7 +44,9 @@ export class ConflictError extends AppError {
 }
 
 // Error handler middleware
-export const errorHandler = (err, req, res, next) => {
+export const errorHandler = async (err, req, res, next) => {
+  if (process.env.SENTRY_DSN) { try { const { Sentry } = await import('../lib/sentry.js'); Sentry.captureException(err); } catch {} }
+
   let error = { ...err };
   error.message = err.message;
 

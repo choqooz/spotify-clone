@@ -14,6 +14,7 @@ import pinoHttp from 'pino-http';
 import compression from 'compression';
 
 import { logger } from './lib/logger.js';
+import { initSentry } from './lib/sentry.js';
 import { initializeSocket } from './lib/socket.js';
 import { connectDB } from './lib/db.js';
 import {
@@ -48,6 +49,7 @@ if (missing.length) {
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
+initSentry(app);
 const PORT = process.env.PORT;
 
 // Trust Render/Cloudflare proxy so rate limiting and IPs work correctly
