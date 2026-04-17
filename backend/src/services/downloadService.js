@@ -830,48 +830,63 @@ class DownloadService {
   async getStreamingUrl(videoId) {
     await this.ensureInitialized();
 
-    const videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
-
     try {
-      const info = await this._getInfo(videoUrl);
+      const yt = await this._createAuthedInnertube();
 
-      if (!info.formats || !Array.isArray(info.formats)) {
-        throw new Error('No formats available');
-      }
-
-      const audioFormats = info.formats.filter((f) => isAudioOnlyFormat(f));
-
-      let bestFormat = null;
-
-      if (audioFormats.length > 0) {
-        bestFormat = audioFormats.reduce((best, current) =>
-          (current.abr || 0) > (best.abr || 0) ? current : best
-        );
-      } else {
-        const combinedFormats = info.formats.filter(
-          (f) =>
-            f.acodec && f.acodec !== 'none' && f.vcodec && f.vcodec !== 'none'
-        );
-
-        if (combinedFormats.length > 0) {
-          bestFormat = combinedFormats.reduce((best, current) =>
-            (current.abr || 0) > (best.abr || 0) ? current : best
-          );
+      let info;
+      for (const client of DownloadService.INNERTUBE_CLIENT_ORDER) {
+        try {
+          info = await yt.getInfo(videoId, { client });
+          if (info?.streaming_data) {
+            logger.info({ videoId, client }, 'Got streaming data for playback');
+            break;
+          }
+        } catch (err) {
+          logger.warn({ videoId, client, err: err.message }, 'Client failed for streaming URL');
         }
       }
 
-      if (!bestFormat || !bestFormat.url) {
-        throw new Error('No valid streaming URL found');
+      if (!info?.streaming_data) {
+        throw new Error('No streaming data available');
       }
 
+      // Find the best audio-only format from adaptive_formats
+      const adaptiveFormats = info.streaming_data.adaptive_formats ?? [];
+      const audioFormats = adaptiveFormats.filter((f) => {
+        const mime = f.mime_type ?? '';
+        return mime.startsWith('audio/');
+      });
+
+      if (audioFormats.length === 0) {
+        throw new Error('No audio formats available');
+      }
+
+      // Pick highest bitrate audio
+      const bestAudio = audioFormats.reduce((best, current) =>
+        (current.bitrate ?? 0) > (best.bitrate ?? 0) ? current : best
+      );
+
+      // Decipher the URL using Innertube's player (handles signature cipher)
+      const url = bestAudio.decipher(yt.session.player);
+
+      if (!url) {
+        throw new Error('Failed to decipher streaming URL');
+      }
+
+      const mime = bestAudio.mime_type ?? 'audio/mp4';
+      const codec = mime.match(/codecs="([^"]+)"/)?.[1] ?? 'unknown';
+
       return {
-        url: bestFormat.url,
-        title: info.title,
-        duration: info.duration,
-        bitrate: bestFormat.abr,
-        codec: bestFormat.acodec,
-        format: bestFormat.format_id,
-        headers: bestFormat.http_headers || {},
+        url,
+        title: info.basic_info?.title ?? 'Unknown',
+        artist: info.basic_info?.author ?? 'Unknown',
+        duration: info.basic_info?.duration ?? 0,
+        thumbnail: info.basic_info?.thumbnail?.[0]?.url ?? '',
+        bitrate: Math.round((bestAudio.bitrate ?? 0) / 1000),
+        codec,
+        mimeType: mime,
+        // URL expires after ~6 hours — frontend should handle refresh
+        expiresAt: Date.now() + 6 * 60 * 60 * 1000,
       };
     } catch (error) {
       throw new Error(`Failed to get streaming URL: ${error.message}`);
