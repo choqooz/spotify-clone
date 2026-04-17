@@ -13,6 +13,7 @@ import { DownloadPanel } from '@/components/DownloadPanel';
 import { useState } from 'react';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts';
+import { useMediaSession } from '@/hooks/useMediaSession';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { PlayerErrorFallback } from '@/components/PlayerErrorFallback';
 
@@ -20,6 +21,7 @@ export const MainLayout = () => {
   const isMobile = useIsMobile();
   const [showDownloadPanel, setShowDownloadPanel] = useState(false);
   useKeyboardShortcuts();
+  useMediaSession();
 
   if (isMobile) {
     // Layout móvil: contenido principal → player → bottom navigation

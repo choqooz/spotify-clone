@@ -242,6 +242,19 @@ export const AudioPlayer = () => {
         const duration = youtubeRef.current.getDuration();
         setCurrentTime(currentTime);
         if (duration) setDuration(duration);
+
+        // Keep OS lockscreen progress bar in sync
+        if ('mediaSession' in navigator && 'setPositionState' in navigator.mediaSession) {
+          try {
+            navigator.mediaSession.setPositionState({
+              duration: duration || 0,
+              playbackRate: 1,
+              position: Math.min(currentTime, duration || 0),
+            });
+          } catch {
+            // Some browsers throw if position > duration — swallow silently
+          }
+        }
       });
     }, 1000);
 
@@ -255,7 +268,22 @@ export const AudioPlayer = () => {
     if (isYouTubeSong || !audioRef.current) return;
 
     const audio = audioRef.current;
-    const updateTime = () => setCurrentTime(audio.currentTime);
+    const updateTime = () => {
+      setCurrentTime(audio.currentTime);
+
+      // Keep OS lockscreen progress bar in sync
+      if ('mediaSession' in navigator && 'setPositionState' in navigator.mediaSession) {
+        try {
+          navigator.mediaSession.setPositionState({
+            duration: audio.duration || 0,
+            playbackRate: audio.playbackRate,
+            position: Math.min(audio.currentTime, audio.duration || 0),
+          });
+        } catch {
+          // Some browsers throw if position > duration — swallow silently
+        }
+      }
+    };
     const updateDuration = () => setDuration(audio.duration);
 
     audio.addEventListener('timeupdate', updateTime);
