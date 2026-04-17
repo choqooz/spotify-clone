@@ -192,6 +192,9 @@ export const SearchPage = () => {
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (inputValue.trim()) {
+      // Hide suggestions and close mobile virtual keyboard on submit
+      setShowSuggestions(false);
+      inputRef.current?.blur();
       // Check for easter egg before searching
       if (checkEasterEgg(inputValue)) {
         triggerEasterEgg();
