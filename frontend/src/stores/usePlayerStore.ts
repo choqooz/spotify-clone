@@ -32,11 +32,6 @@ interface PlayerStore {
   repeatMode: 'none' | 'one' | 'all';
   shuffledIndices: number[];
 
-  // Streaming URL for YouTube songs (replaces iframe with native audio)
-  youtubeStreamUrl: string | null;
-  youtubeStreamExpiresAt: number | null;
-  setYoutubeStreamUrl: (url: string | null, expiresAt: number | null) => void;
-
   // Command fields — AudioPlayer watches these and executes imperatively
   seekCommand: { time: number; id: number } | null;
   volumeCommand: { volume: number; id: number } | null;
@@ -83,10 +78,6 @@ export const usePlayerStore = create<PlayerStore>()(
   seekCommand: null,
   volumeCommand: null,
   restartCommand: null,
-
-  youtubeStreamUrl: null,
-  youtubeStreamExpiresAt: null,
-  setYoutubeStreamUrl: (url, expiresAt) => set({ youtubeStreamUrl: url, youtubeStreamExpiresAt: expiresAt }),
 
   initializeQueue: (songs: Song[]) => {
     const { currentSong } = get();
