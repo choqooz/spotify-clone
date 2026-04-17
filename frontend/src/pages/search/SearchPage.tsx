@@ -327,12 +327,19 @@ export const SearchPage = () => {
                 <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-zinc-400 size-4" />
                 <Input
                   ref={inputRef}
-                  type="text"
+                  type="search"
+                  enterKeyHint="search"
                   placeholder="Search for songs, artists, albums..."
                   value={inputValue}
                   onChange={handleInputChange}
                   onFocus={handleInputFocus}
                   onBlur={handleInputBlur}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      setShowSuggestions(false);
+                      inputRef.current?.blur();
+                    }
+                  }}
                   aria-label="Search songs, artists and albums"
                   aria-autocomplete="list"
                   aria-controls="search-suggestions"
