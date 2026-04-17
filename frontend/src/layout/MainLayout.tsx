@@ -14,6 +14,7 @@ import { useState } from 'react';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts';
 import { useMediaSession } from '@/hooks/useMediaSession';
+import { useStreamingUrl } from '@/hooks/useStreamingUrl';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { PlayerErrorFallback } from '@/components/PlayerErrorFallback';
 
@@ -22,6 +23,7 @@ export const MainLayout = () => {
   const [showDownloadPanel, setShowDownloadPanel] = useState(false);
   useKeyboardShortcuts();
   useMediaSession();
+  useStreamingUrl();
 
   if (isMobile) {
     // Layout móvil: contenido principal → player → bottom navigation

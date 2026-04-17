@@ -8,6 +8,7 @@ import { Play } from 'lucide-react';
 export const AudioPlayer = () => {
   const audioRef = useRef<HTMLAudioElement>(null);
   const youtubeRef = useRef<YouTubePlayer | null>(null);
+  // prevSongRef tracks either audioUrl (local) or videoId (YouTube) to detect song changes
   const prevSongRef = useRef<string | null>(null);
   const [needsManualPlay, setNeedsManualPlay] = useState(false);
   const [youtubeReady, setYoutubeReady] = useState(false);
@@ -33,8 +34,16 @@ export const AudioPlayer = () => {
   const seekCommand = usePlayerStore((s) => s.seekCommand);
   const volumeCommand = usePlayerStore((s) => s.volumeCommand);
   const restartCommand = usePlayerStore((s) => s.restartCommand);
+  const youtubeStreamUrl = usePlayerStore((s) => s.youtubeStreamUrl);
+  const setYoutubeStreamUrl = usePlayerStore((s) => s.setYoutubeStreamUrl);
 
-  const isYouTubeSong = currentSong?.videoId && !currentSong?.audioUrl;
+  // Whether this song originally comes from YouTube (no local audioUrl)
+  const isYouTubeSong = Boolean(currentSong?.videoId && !currentSong?.audioUrl);
+
+  // TRUE → use the native <audio> element (local song OR YouTube with streaming URL ready)
+  const useNativeAudioPlayer = !isYouTubeSong || !!youtubeStreamUrl;
+  // TRUE → fall back to the YouTube iframe (YouTube song but streaming URL not yet available)
+  const useYouTubeIframe = isYouTubeSong && !youtubeStreamUrl;
 
   // YouTube player options - optimized for local networks like chocolateey
   const youtubeOpts = {
@@ -75,13 +84,13 @@ export const AudioPlayer = () => {
 
   // Handle play/pause logic
   useEffect(() => {
-    if (isYouTubeSong && youtubeRef.current) {
+    if (useYouTubeIframe && youtubeRef.current) {
       if (isPlaying) {
         safeYouTubeCall(() => youtubeRef.current.playVideo());
       } else {
         safeYouTubeCall(() => youtubeRef.current.pauseVideo());
       }
-    } else if (audioRef.current) {
+    } else if (useNativeAudioPlayer && audioRef.current) {
       if (isPlaying) {
         audioRef.current.play().catch(() => {
           setNeedsManualPlay(true);
@@ -90,12 +99,12 @@ export const AudioPlayer = () => {
         audioRef.current.pause();
       }
     }
-  }, [isPlaying, isYouTubeSong]);
+  }, [isPlaying, useYouTubeIframe, useNativeAudioPlayer]);
 
-  // Handle song ends for audio
+  // Handle song ends — always wired on the audio element (covers both local and YouTube-via-native)
   useEffect(() => {
     const audio = audioRef.current;
-    if (!audio || isYouTubeSong) return;
+    if (!audio) return;
 
     const handleEnded = () => {
       playNext();
@@ -103,9 +112,25 @@ export const AudioPlayer = () => {
 
     audio.addEventListener('ended', handleEnded);
     return () => audio.removeEventListener('ended', handleEnded);
-  }, [playNext, isYouTubeSong]);
+  }, [playNext]);
 
-  // Handle song changes for audio
+  // Handle audio element errors — clears the streaming URL so we fall back to iframe
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+
+    const handleError = () => {
+      if (isYouTubeSong && youtubeStreamUrl) {
+        // Streaming URL probably expired — clear it so iframe fallback kicks in
+        setYoutubeStreamUrl(null, null);
+      }
+    };
+
+    audio.addEventListener('error', handleError);
+    return () => audio.removeEventListener('error', handleError);
+  }, [isYouTubeSong, youtubeStreamUrl, setYoutubeStreamUrl]);
+
+  // Handle song changes for local songs (audioUrl-based)
   useEffect(() => {
     if (isYouTubeSong || !audioRef.current || !currentSong?.audioUrl) return;
 
@@ -125,9 +150,29 @@ export const AudioPlayer = () => {
     }
   }, [currentSong, isPlaying, isYouTubeSong]);
 
-  // Handle song changes for YouTube
+  // Handle song changes for YouTube songs with a streaming URL (native audio path)
   useEffect(() => {
-    if (!isYouTubeSong || !currentSong?.videoId) return;
+    if (!isYouTubeSong || !youtubeStreamUrl || !audioRef.current) return;
+
+    const audio = audioRef.current;
+    const isSongChange = prevSongRef.current !== currentSong?.videoId;
+
+    if (isSongChange) {
+      audio.src = youtubeStreamUrl;
+      audio.currentTime = 0;
+      prevSongRef.current = currentSong?.videoId ?? null;
+
+      if (isPlaying) {
+        audio.play().catch(() => {
+          setNeedsManualPlay(true);
+        });
+      }
+    }
+  }, [currentSong, youtubeStreamUrl, isPlaying, isYouTubeSong]);
+
+  // Handle song changes for YouTube songs using the iframe fallback
+  useEffect(() => {
+    if (!useYouTubeIframe || !currentSong?.videoId) return;
 
     const isNewYouTubeSong = prevSongRef.current !== currentSong.videoId;
 
@@ -142,7 +187,7 @@ export const AudioPlayer = () => {
         }, 100);
       }
     }
-  }, [currentSong, isYouTubeSong, isPlaying]);
+  }, [currentSong, useYouTubeIframe, isPlaying]);
 
   // YouTube event handlers
   const onYouTubeReady = (event: YouTubeEvent) => {
@@ -232,9 +277,9 @@ export const AudioPlayer = () => {
     }
   };
 
-  // Time updates for YouTube
+  // Time updates for YouTube iframe path
   useEffect(() => {
-    if (!isYouTubeSong || !youtubeReady || !youtubeRef.current) return;
+    if (!useYouTubeIframe || !youtubeReady || !youtubeRef.current) return;
 
     const interval = setInterval(() => {
       safeYouTubeCall(() => {
@@ -261,11 +306,11 @@ export const AudioPlayer = () => {
     return () => {
       clearInterval(interval);
     };
-  }, [isYouTubeSong, youtubeReady, setCurrentTime, setDuration]);
+  }, [useYouTubeIframe, youtubeReady, setCurrentTime, setDuration]);
 
-  // Time updates for audio
+  // Time updates for native audio element (local songs AND YouTube-via-streaming-URL)
   useEffect(() => {
-    if (isYouTubeSong || !audioRef.current) return;
+    if (!useNativeAudioPlayer || !audioRef.current) return;
 
     const audio = audioRef.current;
     const updateTime = () => {
@@ -293,49 +338,52 @@ export const AudioPlayer = () => {
       audio.removeEventListener('timeupdate', updateTime);
       audio.removeEventListener('loadedmetadata', updateDuration);
     };
-  }, [isYouTubeSong, setCurrentTime, setDuration]);
+  }, [useNativeAudioPlayer, setCurrentTime, setDuration]);
 
-  // Manual play function
+  // Manual play function (iframe fallback path)
   const handleManualPlay = () => {
-    if (youtubeRef.current && isPlaying) {
+    if (useYouTubeIframe && youtubeRef.current && isPlaying) {
       safeYouTubeCall(() => {
         youtubeRef.current.playVideo();
         setNeedsManualPlay(false);
       });
+    } else if (useNativeAudioPlayer && audioRef.current && isPlaying) {
+      audioRef.current.play().catch(() => {});
+      setNeedsManualPlay(false);
     }
   };
 
-  // React to seek commands from the store (replaces window custom events)
+  // React to seek commands from the store
   useEffect(() => {
     if (!seekCommand) return;
 
-    if (isYouTubeSong && youtubeRef.current) {
+    if (useYouTubeIframe && youtubeRef.current) {
       safeYouTubeCall(() => youtubeRef.current.seekTo(seekCommand.time, true));
     } else if (audioRef.current) {
       audioRef.current.currentTime = seekCommand.time;
     }
 
     usePlayerStore.getState().clearSeekCommand();
-  }, [seekCommand, isYouTubeSong]);
+  }, [seekCommand, useYouTubeIframe]);
 
-  // React to volume commands from the store (replaces window custom events)
+  // React to volume commands from the store
   useEffect(() => {
     if (!volumeCommand) return;
 
-    if (isYouTubeSong && youtubeRef.current) {
+    if (useYouTubeIframe && youtubeRef.current) {
       safeYouTubeCall(() => youtubeRef.current.setVolume(volumeCommand.volume));
     } else if (audioRef.current) {
       audioRef.current.volume = volumeCommand.volume / 100;
     }
 
     usePlayerStore.getState().clearVolumeCommand();
-  }, [volumeCommand, isYouTubeSong]);
+  }, [volumeCommand, useYouTubeIframe]);
 
-  // React to restart commands from the store (replaces window custom events)
+  // React to restart commands from the store
   useEffect(() => {
     if (restartCommand === null) return;
 
-    if (isYouTubeSong && youtubeRef.current) {
+    if (useYouTubeIframe && youtubeRef.current) {
       safeYouTubeCall(() => {
         youtubeRef.current.seekTo(0, true);
         youtubeRef.current.playVideo();
@@ -348,15 +396,15 @@ export const AudioPlayer = () => {
     }
 
     usePlayerStore.getState().clearRestartCommand();
-  }, [restartCommand, isYouTubeSong]);
+  }, [restartCommand, useYouTubeIframe]);
 
   return (
     <>
-      {/* Audio player for local songs */}
-      {!isYouTubeSong && <audio ref={audioRef} />}
+      {/* Native audio player — always mounted for local songs and YouTube-via-streaming-URL */}
+      <audio ref={audioRef} />
 
-      {/* YouTube player for YouTube songs */}
-      {isYouTubeSong && currentSong?.videoId && (
+      {/* YouTube iframe — only rendered as fallback when streaming URL is not yet available */}
+      {useYouTubeIframe && currentSong?.videoId && (
         <YouTube
           key={currentSong.videoId}
           videoId={currentSong.videoId}
@@ -370,7 +418,7 @@ export const AudioPlayer = () => {
       )}
 
       {/* Manual play button when autoplay is blocked */}
-      {needsManualPlay && isYouTubeSong && (
+      {needsManualPlay && (
         <div className="fixed top-20 right-4 z-50 bg-zinc-900/95 backdrop-blur-sm border border-zinc-700 rounded-lg p-4 shadow-lg">
           <div className="flex items-center gap-3">
             <div className="text-sm text-zinc-300">
@@ -390,4 +438,3 @@ export const AudioPlayer = () => {
     </>
   );
 };
-
